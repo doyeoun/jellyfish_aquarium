@@ -129,6 +129,50 @@ def remove_online_player(nick):
         except: pass
     import threading as _t; _t.Thread(target=_r,daemon=True).start()
 
+_sse_running = False
+
+def start_sse_stream(nick_self):
+    """Firebase SSE 스트리밍 — 변경 즉시 수신."""
+    global _sse_running
+    _sse_running = True
+    def _stream():
+        global _online_players, _sse_running
+        import urllib.request as _ur, json as _j, time as _tm
+        while _sse_running:
+            try:
+                req = _ur.Request(FIREBASE_URL+"online.json",
+                                  headers={'Accept':'text/event-stream','User-Agent':'jellyfish-game'})
+                with _ur.urlopen(req, timeout=None) as r:
+                    buf = ''
+                    while _sse_running:
+                        ch = r.read(1).decode('utf-8','ignore')
+                        if not ch: break
+                        buf += ch
+                        if buf.endswith('\n\n'):
+                            lines = buf.strip().split('\n')
+                            data_line = next((l[6:] for l in lines if l.startswith('data:')), None)
+                            if data_line:
+                                try:
+                                    pkt = _j.loads(data_line)
+                                    raw = pkt.get('data') or {}
+                                    now = int(_tm.time())
+                                    new_op={k:v for k,v in raw.items()
+                                            if k!=nick_self and now-v.get('last_seen',0)<20}
+                                    for k,v in new_op.items():
+                                        old=_online_players.get(k,{})
+                                        v['cur_x']=old.get('cur_x',v['x'])
+                                        v['cur_y']=old.get('cur_y',v['y'])
+                                    _online_players=new_op
+                                except: pass
+                            buf=''
+            except:
+                _tm.sleep(1)  # 끊기면 1초 후 재연결
+    import threading as _t; _t.Thread(target=_stream,daemon=True).start()
+
+def stop_sse_stream():
+    global _sse_running
+    _sse_running = False
+
 def fetch_online_bg(nick_self):
     def _f():
         global _online_players, _online_chat
@@ -137,8 +181,14 @@ def fetch_online_bg(nick_self):
             req=_ur.Request(FIREBASE_URL+"online.json",headers={'User-Agent':'jellyfish-game'})
             with _ur.urlopen(req,timeout=3) as r: data=_j.loads(r.read())
             now=int(_tm.time())
-            _online_players={k:v for k,v in (data or {}).items()
-                             if k!=nick_self and now-v.get('last_seen',0)<20}
+            new_op={k:v for k,v in (data or {}).items()
+                    if k!=nick_self and now-v.get('last_seen',0)<20}
+            # 보간 위치 보존
+            for k,v in new_op.items():
+                old=_online_players.get(k,{})
+                v['cur_x']=old.get('cur_x', v['x'])
+                v['cur_y']=old.get('cur_y', v['y'])
+            _online_players=new_op
         except: pass
         try:
             import urllib.request as _ur2, json as _j2
@@ -1924,7 +1974,7 @@ def _draw_online_chat_bubble(surf, cx, top_y, text):
     surf.blit(tw,(bx2+pad, by2+pad//2))
 
 
-def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_active, chat_ime, move_phase=0.0, local_chat='', local_chat_t=0):
+def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_active, chat_ime, move_phase=0.0, local_chat='', local_chat_t=0, interact_open=False, action=None, action_phase=0.0):
     global _online_bg
     if _online_bg is None: _online_bg = make_online_bg()
     surf.blit(_online_bg,(0,0))
@@ -1938,7 +1988,7 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
     moving = move_phase  # non-zero when moving
     # 다른 플레이어
     for nick,data in players.items():
-        px2=int(data.get('x',190)); py2=int(data.get('y',200))
+        px2=int(data.get('cur_x', data.get('x',190))); py2=int(data.get('cur_y', data.get('y',200)))
         spr2=pygame.transform.scale(PLAYER_BELL_SPRITE,(sp_sz,sp_h))
         t_phase = data.get('phase', now2*2.0)
         surf.blit(spr2,(px2-sp_sz//2,py2-sp_h//2))
@@ -1956,6 +2006,9 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
     surf.blit(nt_l,(int(lx)-nt_l.get_width()//2,int(ly)-sp_h//2-14))
     if local_chat and now2-local_chat_t<10:
         _draw_online_chat_bubble(surf,int(lx),int(ly)-sp_h//2-14,local_chat)
+    # 로컬 액션
+    if move_phase and hasattr(move_phase,'__float__'):
+        _draw_online_tentacles(surf,int(lx),int(ly),sp_sz,sp_h,move_phase,any(online_keys.values()) if 'online_keys' in dir() else False)
     # 채팅 영역
     chat_bg=pygame.Surface((OW,OH_CHAT),pygame.SRCALPHA)
     chat_bg.fill((5,15,35,215))
@@ -1976,6 +2029,14 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
     col4=(220,245,220) if chat_active else (100,140,115)
     fi2=get_font(11); ti2=fi2.render(disp2[:38],True,col4)
     surf.blit(ti2,(12,inp_y+4))
+    # 액션 애니메이션 (로컬)
+    if action:
+        _draw_online_action(surf,int(lx),int(ly),sp_sz,sp_h,action,action_phase)
+    # 휠 아이콘
+    wx_icon=OW-20; wy_icon=OH_PLAY-20
+    draw_online_wheel_icon(surf,wx_icon,wy_icon,interact_open)
+    if interact_open:
+        draw_online_interact_list(surf,wx_icon,wy_icon,action)
     # 나가기
     bk=pygame.Surface((52,22),pygame.SRCALPHA)
     bk.fill((25,55,40,210))
@@ -1986,6 +2047,52 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
     # 온라인 인원
     fo2=get_font(10); to2=fo2.render(f'접속자 {len(players)+1}명',True,(120,195,155))
     surf.blit(to2,(8,6))
+
+
+def draw_online_wheel_icon(surf, x, y, highlighted=False):
+    col = (120,220,165) if highlighted else (80,165,120)
+    pygame.draw.ellipse(surf, col, (x-9,y-14,18,26), 2)
+    pygame.draw.rect(surf, col, (x-3,y-7,6,10), border_radius=2)
+    pygame.draw.polygon(surf, col, [(x,y-10),(x-4,y-6),(x+4,y-6)])
+    pygame.draw.polygon(surf, col, [(x,y+4),(x-4,y),(x+4,y)])
+
+
+def draw_online_interact_list(surf, wx, wy, action):
+    items = [('banzai','만세하기'),(  'dance','춤추기')]
+    iw, ih = 115, 36
+    ly = wy - len(items)*ih - 8
+    for i,(key,label) in enumerate(items):
+        iy = ly + i*ih
+        bg = pygame.Surface((iw,ih),pygame.SRCALPHA)
+        active = action==key
+        bg.fill((25,70,50,235) if active else (15,45,35,215))
+        pygame.draw.rect(bg,(80,200,130) if active else (55,140,90),(0,0,iw,ih),1,border_radius=6)
+        lx = min(wx-iw//2, OW-iw-5)
+        surf.blit(bg,(lx,iy))
+        fl=get_font(14,bold=True)
+        tl=fl.render(label,True,(200,255,220) if active else (155,215,180))
+        surf.blit(tl,(lx+iw//2-tl.get_width()//2, iy+ih//2-tl.get_height()//2))
+
+
+def _draw_online_action(surf, cx, cy, bw, bh, action, phase):
+    tc = (228,175,132); thick = max(2, bw//16)
+    if action == 'banzai':
+        # 만세: sin 곡선으로 한 번 들었다 내림
+        lift = max(0.0, math.sin(phase * (math.pi / 3.6)))
+        for side in (-1,1):
+            sx=cx+side*int(bw*0.42); sy=cy+bh//6
+            ex=cx+side*int(bw*0.72)
+            ey=int(cy - int(bh*0.62)*lift + bh//5*(1.0-lift))
+            pygame.draw.line(surf,(*tc,215),(sx,sy),(ex,ey),thick)
+            pygame.draw.circle(surf,(*tc,195),(ex,ey),max(2,bw//18))
+    elif action == 'dance':
+        # 춤: 머리 양쪽에서 ~ ~ 웨이브
+        for idx,side in enumerate((-1,1)):
+            sx=cx+side*int(bw*0.38); sy=cy+bh//8
+            wave=int(math.sin(phase*1.2+idx*0.8)*bh*0.32)
+            ex=cx+side*int(bw*0.76); ey=sy+wave
+            pygame.draw.line(surf,(*tc,215),(sx,sy),(ex,ey),thick)
+            pygame.draw.circle(surf,(*tc,195),(ex,ey),max(2,bw//18))
 
 
 def draw_settings_icon(surf, rect):
@@ -4520,9 +4627,13 @@ def main():
     online_chat_active  = False
     online_sync_t       = 0
     online_fetch_t      = 0
-    online_move_phase   = 0.0
-    online_local_chat   = ''
-    online_local_chat_t = 0
+    online_move_phase    = 0.0
+    online_local_chat    = ''
+    online_local_chat_t  = 0
+    online_interact_open = False
+    online_action        = None
+    online_action_timer  = 0
+    online_action_phase  = 0.0
     settings_dragging   = None   # 'bgm', 'sfx', 'chat'
     if show_nickname_input:
         pygame.key.start_text_input()
@@ -4652,7 +4763,7 @@ def main():
                     elif show_aquarium:   show_aquarium = False
                     elif online_chat_active:         online_chat_active=False; pygame.key.stop_text_input()
                     elif show_online:
-                        show_online=False; remove_online_player(player_nickname)
+                        show_online=False; stop_sse_stream(); remove_online_player(player_nickname)
                     elif show_settings:             show_settings = False; settings_dragging = None
                     elif show_ranking:              show_ranking = False
                     elif show_dev_reset:           show_dev_reset = False
@@ -4711,7 +4822,22 @@ def main():
                     if show_online:
                         # 나가기 버튼
                         if pygame.Rect(OW-58,4,52,22).collidepoint(mx,my):
-                            show_online=False; remove_online_player(player_nickname)
+                            show_online=False; stop_sse_stream(); remove_online_player(player_nickname)
+                        # 휠 아이콘
+                        elif pygame.Rect(OW-32,OH_PLAY-32,24,24).collidepoint(mx,my):
+                            online_interact_open = not online_interact_open
+                        # 인터랙션 리스트 항목
+                        elif online_interact_open:
+                            items=[('banzai',24),('dance',180)]
+                            iw,ih=115,36; wx_c=OW-20; ly_c=OH_PLAY-20-len(items)*ih-8
+                            for i,(key,dur) in enumerate(items):
+                                iy=ly_c+i*ih
+                                lx_c=min(wx_c-iw//2, OW-iw-5)
+                                if pygame.Rect(lx_c,iy,iw,ih).collidepoint(mx,my):
+                                    online_action=key; online_action_timer=dur; online_action_phase=0.0
+                                    online_interact_open=False; break
+                            else:
+                                online_interact_open=False
                         # 채팅창 클릭
                         inp_y=OH_PLAY+OH_CHAT-30
                         if pygame.Rect(8,inp_y,OW-16,24).collidepoint(mx,my):
@@ -4974,6 +5100,7 @@ def main():
                         show_online = True
                         online_x = float(OW//2); online_y = float(OH_PLAY//2)
                         online_keys = {'w':False,'a':False,'s':False,'d':False}
+                        start_sse_stream(player_nickname)
                         fetch_online_bg(player_nickname)
                         show_bag=False; show_scroll=False; show_aquarium=False
                     elif SETTINGS_RECT.collidepoint(mx, my):
@@ -5035,19 +5162,29 @@ def main():
             if online_keys['d'] and not online_chat_active: online_x = min(OW-20, online_x+spd)
             # 위치 동기화
             online_sync_t += 1
-            if online_sync_t >= 18:
+            if online_sync_t >= 10:
                 online_sync_t = 0
                 sync_online_pos(player_nickname, online_x, online_y)
             online_fetch_t += 1
-            if online_fetch_t >= 60:
+            if online_fetch_t >= 90:  # 채팅만 주기적으로 fetch
                 online_fetch_t = 0
                 fetch_online_bg(player_nickname)
+            # 보간: cur_x/cur_y를 target x/y로 부드럽게 이동
+            for _od in _online_players.values():
+                _od['cur_x'] = _od.get('cur_x', _od['x']) + (_od['x'] - _od.get('cur_x',_od['x'])) * 0.28
+                _od['cur_y'] = _od.get('cur_y', _od['y']) + (_od['y'] - _od.get('cur_y',_od['y'])) * 0.28
             is_mv = any(online_keys[k] for k in online_keys)
             if is_mv: online_move_phase += 0.18
+            # 액션 애니메이션 업데이트
+            if online_action_timer > 0:
+                online_action_timer -= 1
+                online_action_phase += 0.15
+                if online_action_timer == 0: online_action = None
             draw_online_world(screen, online_x, online_y, player_nickname,
                               _online_players, _online_chat,
                               online_chat_input, online_chat_active, online_chat_ime,
-                              online_move_phase, online_local_chat, online_local_chat_t)
+                              online_move_phase, online_local_chat, online_local_chat_t,
+                              online_interact_open, online_action, online_action_phase)
         if show_settings:
             draw_settings_screen(screen, bgm_vol, sfx_vol, chat_vol)
         if show_ranking:
