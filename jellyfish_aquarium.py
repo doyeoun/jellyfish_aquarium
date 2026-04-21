@@ -8,7 +8,7 @@ import threading
 import urllib.request as _url_req
 import webbrowser
 
-VERSION = '2.0.0'
+VERSION = '3.0.0'
 _latest_ver  = None   # None=확인중, ''=최신, 버전문자열=업데이트있음
 _release_url = ''
 
@@ -31,7 +31,53 @@ threading.Thread(target=_fetch_update, daemon=True).start()
 # exe로 패키징돼도 저장 위치가 실행 파일 옆으로 유지됨
 _BASE = os.path.dirname(sys.executable if getattr(sys,'frozen',False)
                         else os.path.abspath(__file__))
-SAVE_PATH    = os.path.join(_BASE, 'jellyfish_save.json')
+SAVE_PATH = os.path.join(_BASE, 'jellyfish_save.json')
+# exe 번들 시 _MEIPASS에서 사운드 로드, 아니면 exe 옆 sounds/ 폴더
+if getattr(sys,'frozen',False) and getattr(sys,'_MEIPASS',None):
+    SOUNDS_DIR = os.path.join(sys._MEIPASS, 'sounds')
+else:
+    SOUNDS_DIR = os.path.join(_BASE, 'sounds')
+
+# 사운드는 pygame.init() 이후에 초기화됨 (아래 init_sounds() 호출)
+SND_KILL = SND_FEED = SND_BUBBLE = SND_BELL = SND_FANFARE = SND_AQUARIUM = SND_UI1 = SND_UI2 = SND_RELEASE = SND_CHAT1 = SND_CHAT2 = SND_SQUEAK1 = SND_SQUEAK2 = None
+
+def play_ui_click():
+    opts = [s for s in [SND_UI1, SND_UI2] if s]
+    if opts: random.choice(opts).play()
+
+def _snd(filename):
+    path = os.path.join(SOUNDS_DIR, filename)
+    try:
+        return pygame.mixer.Sound(path)
+    except:
+        return None
+
+def init_sounds():
+    global SND_KILL, SND_FEED, SND_BUBBLE, SND_BELL, SND_FANFARE, SND_AQUARIUM, SND_UI1, SND_UI2, SND_RELEASE, SND_CHAT1, SND_CHAT2, SND_SQUEAK1, SND_SQUEAK2
+    try:
+        pygame.mixer.music.load(os.path.join(SOUNDS_DIR, 'bgm.mp3'))
+        pygame.mixer.music.set_volume(0.35)
+        pygame.mixer.music.play(-1)
+    except: pass
+    SND_KILL     = _snd('scream.mp3')
+    SND_FEED     = _snd('eating.mp3')
+    SND_BUBBLE   = _snd('bubbles-single2.wav')
+    SND_BELL     = _snd('bell.wav')
+    SND_FANFARE  = _snd('castlefanfare.mp3')
+    SND_AQUARIUM = _snd('bubbles.mp3')
+    SND_UI1      = _snd('ui_pop1.mp3')
+    SND_UI2      = _snd('ui_pop2.wav')
+    SND_RELEASE  = _snd('release.mp3')
+    SND_CHAT1    = _snd('chat1.mp3')
+    SND_CHAT2    = _snd('chat2.mp3')
+    SND_SQUEAK1  = _snd('squeak1.mp3')
+    SND_SQUEAK2  = _snd('squeak2.mp3')
+    for _s, _v in [(SND_KILL,0.7),(SND_FEED,0.8),(SND_BUBBLE,0.5),
+                   (SND_BELL,0.7),(SND_FANFARE,0.8),(SND_AQUARIUM,0.6),
+                   (SND_UI1,0.6),(SND_UI2,0.6),(SND_RELEASE,0.75),
+                   (SND_CHAT1,0.7),(SND_CHAT2,0.7),
+                   (SND_SQUEAK1,0.7),(SND_SQUEAK2,0.7)]:
+        if _s: _s.set_volume(_v)
 FIREBASE_URL = "https://jellyfish-aquarium-default-rtdb.firebaseio.com/"
 GRADE_SCORES = {'common':10,'uncommon':25,'rare':60,'epic':150,'legendary':800,'secret':500,'lock':0}
 
@@ -54,6 +100,67 @@ def upload_score_bg(nickname, score):
         except: pass
     import threading as _t; _t.Thread(target=_up, daemon=True).start()
 
+# ── 온라인 멀티플레이 ─────────────────────────────────────────
+_online_players = {}   # nick → {x,y,nickname,last_seen}
+_online_chat    = []   # [{nick,text,time}]
+
+def sync_online_pos(nick, x, y):
+    def _s():
+        try:
+            import urllib.request as _ur, urllib.parse as _up2, json as _j, time as _tm
+            safe = _up2.quote(nick, safe='')
+            url  = FIREBASE_URL + f"online/{safe}.json"
+            data = _j.dumps({"x":int(x),"y":int(y),"nickname":nick,
+                              "last_seen":int(_tm.time())}).encode()
+            req  = _ur.Request(url,data=data,method='PUT',
+                               headers={'Content-Type':'application/json','User-Agent':'jellyfish-game'})
+            _ur.urlopen(req,timeout=3)
+        except: pass
+    import threading as _t; _t.Thread(target=_s,daemon=True).start()
+
+def remove_online_player(nick):
+    def _r():
+        try:
+            import urllib.request as _ur, urllib.parse as _up2
+            safe = _up2.quote(nick, safe='')
+            req  = _ur.Request(FIREBASE_URL+f"online/{safe}.json",method='DELETE',
+                               headers={'User-Agent':'jellyfish-game'})
+            _ur.urlopen(req,timeout=3)
+        except: pass
+    import threading as _t; _t.Thread(target=_r,daemon=True).start()
+
+def fetch_online_bg(nick_self):
+    def _f():
+        global _online_players, _online_chat
+        try:
+            import urllib.request as _ur, json as _j, time as _tm
+            req=_ur.Request(FIREBASE_URL+"online.json",headers={'User-Agent':'jellyfish-game'})
+            with _ur.urlopen(req,timeout=3) as r: data=_j.loads(r.read())
+            now=int(_tm.time())
+            _online_players={k:v for k,v in (data or {}).items()
+                             if k!=nick_self and now-v.get('last_seen',0)<20}
+        except: pass
+        try:
+            import urllib.request as _ur2, json as _j2
+            req2=_ur2.Request(FIREBASE_URL+"ochat.json",headers={'User-Agent':'jellyfish-game'})
+            with _ur2.urlopen(req2,timeout=3) as r2: d2=_j2.loads(r2.read())
+            if d2: _online_chat=sorted(d2.values(),key=lambda x:x.get('t',0))[-8:]
+        except: pass
+    import threading as _t; _t.Thread(target=_f,daemon=True).start()
+
+def send_online_chat(nick, text):
+    def _sc():
+        try:
+            import urllib.request as _ur, json as _j, time as _tm
+            url=FIREBASE_URL+"ochat.json"
+            data=_j.dumps({"nick":nick,"text":text,"t":int(_tm.time())}).encode()
+            req=_ur.Request(url,data=data,method='POST',
+                            headers={'Content-Type':'application/json','User-Agent':'jellyfish-game'})
+            _ur.urlopen(req,timeout=3)
+        except: pass
+    import threading as _t; _t.Thread(target=_sc,daemon=True).start()
+
+
 def fetch_rankings_bg():
     global _rankings_cache, _rankings_loading
     _rankings_loading = True
@@ -70,7 +177,7 @@ def fetch_rankings_bg():
         _rankings_loading = False
     import threading as _t; _t.Thread(target=_fetch, daemon=True).start()
 
-def save_game(inventory, stage, cult_docs=None, aquarium=None, nickname=''):
+def save_game(inventory, stage, cult_docs=None, aquarium=None, nickname='', bgm_vol=0.35, sfx_vol=0.7, chat_vol=0.7):
     data = {
         'inventory': {str(k): v for k, v in inventory.items()},
         'stage': stage,
@@ -78,6 +185,9 @@ def save_game(inventory, stage, cult_docs=None, aquarium=None, nickname=''):
         'aquarium':  list(aquarium or []),
         'bred_slots': list(_bred_slots),
         'nickname':   nickname,
+        'bgm_vol':    bgm_vol,
+        'sfx_vol':    sfx_vol,
+        'chat_vol':   chat_vol,
     }
     try:
         with open(SAVE_PATH, 'w', encoding='utf-8') as f:
@@ -87,7 +197,7 @@ def save_game(inventory, stage, cult_docs=None, aquarium=None, nickname=''):
 
 def load_game():
     if not os.path.exists(SAVE_PATH):
-        return {}, 1, {}, [], set(), ''
+        return {}, 1, {}, [], set(), '', 0.35, 0.7, 0.7
     try:
         with open(SAVE_PATH, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -97,9 +207,12 @@ def load_game():
         aquarium   = [int(x) for x in data.get('aquarium', [])]
         bred_slots = set(int(x) for x in data.get('bred_slots', []))
         nickname   = data.get('nickname', '')
-        return inv, stage, cult_docs, aquarium, bred_slots, nickname
+        bgm_vol    = float(data.get('bgm_vol', 0.35))
+        sfx_vol    = float(data.get('sfx_vol', 0.7))
+        chat_vol   = float(data.get('chat_vol', 0.7))
+        return inv, stage, cult_docs, aquarium, bred_slots, nickname, bgm_vol, sfx_vol, chat_vol
     except Exception:
-        return {}, 1, {}, [], set(), ''
+        return {}, 1, {}, [], set(), '', 0.35, 0.7, 0.7
 
 try:
     import ctypes
@@ -108,6 +221,7 @@ except ImportError:
     CTYPES_OK = False
 
 pygame.init()
+init_sounds()
 
 WIDTH, HEIGHT = 380, 560
 FPS = 60
@@ -1069,6 +1183,15 @@ def make_bell_sprite(defn):
 BELL_SPRITES = [make_bell_sprite(d) for d in JELLY_DEFS]
 
 # ── 무지개 해파리 ─────────────────────────────────────────────
+JELLY_CHAT_MSGS = [
+    "우릴 먹을거야?", "저 잡지마세요..", "안녕하세요!", "여기 좋다~",
+    "배고파...", "저 잡으려고요?", "도망칠게요!", "오늘 날씨 좋다",
+    "졸려...", "친구가 없어요", "같이 놀아요!", "낯선 분이에요",
+    "여기가 어디죠?", "살려줘요!", "얍!", "조용히 해줘요",
+    "나 예쁘죠?", "나 좀 봐줘요", "으아아~", "뭘 보는 거예요?",
+    "우리 사이좋게 지내요", "쉬고싶다...", "이 바다 맘에 들어요",
+]
+
 RAINBOW_HUES = [
     (255,  65,  65),  # 빨강
     (255, 148,  20),  # 주황
@@ -1104,6 +1227,23 @@ def make_rainbow_bell_sprite():
     return pygame.transform.scale(raw, (W_PIX*ps, BH*ps))
 
 RAINBOW_BELL_SPRITE = make_rainbow_bell_sprite()
+
+def make_player_bell_sprite():
+    """온라인 플레이어 아바타: 살색 해파리."""
+    cmap_p = {'.':None,'X':(192,128,92),'D':(228,175,132),'M':(252,210,168),'H':(255,238,215)}
+    art = JELLY_DEFS[0]['art']
+    BH = len(art); ps = 4
+    raw = pygame.Surface((W_PIX, BH), pygame.SRCALPHA)
+    for row, line in enumerate(art):
+        for col, ch in enumerate(line[:W_PIX]):
+            c = cmap_p.get(ch)
+            if c: raw.set_at((col, row), (*c, 255))
+    ey = BH - 3
+    raw.set_at((W_PIX//2-2, ey), (80, 40, 20, 255))
+    raw.set_at((W_PIX//2+1, ey), (80, 40, 20, 255))
+    return pygame.transform.scale(raw, (W_PIX*ps, BH*ps))
+
+PLAYER_BELL_SPRITE = make_player_bell_sprite()
 
 def make_twin_bell_sprite():
     """쌍둥이 해파리: 두 머리가 공유 몸통으로 붙은 커스텀 20×8 아트."""
@@ -1212,7 +1352,14 @@ GACHA_TOTAL        = 300
 BAG_RECT      = pygame.Rect(WIDTH-48,  6, 38, 38)
 SCROLL_RECT   = pygame.Rect(WIDTH-48, 50, 38, 38)
 AQUARIUM_RECT = pygame.Rect(WIDTH-48,  94, 38, 38)
-RANKING_RECT  = pygame.Rect(WIDTH-48, 138, 38, 38)
+RANKING_RECT   = pygame.Rect(WIDTH-48, 138, 38, 38)
+SETTINGS_RECT  = pygame.Rect(6,  6, 38, 38)
+ONLINE_RECT    = pygame.Rect(6, 50, 38, 38)
+OW = 380; OH_PLAY = 430; OH_CHAT = 130  # 온라인 월드 치수
+# 설정 화면 슬라이더 (x, y, width)
+SL_BGM  = (50, 175, WIDTH-100)
+SL_SFX  = (50, 248, WIDTH-100)
+SL_CHAT = (50, 321, WIDTH-100)
 AQ_L, AQ_R, AQ_T, AQ_B = 18, WIDTH-18, 82, HEIGHT-72
 AQUARIUM_ADD_BTN = pygame.Rect(WIDTH//2-52, HEIGHT-46, 104, 30)
 AQ_BACK_RECT     = pygame.Rect(15, 12, 75, 28)
@@ -1713,6 +1860,189 @@ def draw_dev_add_screen(surf, inventory):
         fe = get_font(14)
         et = fe.render('미획득 해파리가 없어.', True, (60, 120, 60))
         surf.blit(et, (WIDTH//2-et.get_width()//2, HEIGHT//2))
+
+
+def draw_online_icon(surf, rect):
+    x,y,w,h = rect.x,rect.y,rect.w,rect.h
+    cx,cy = x+w//2, y+h//2
+    pygame.draw.circle(surf,(80,200,130),(cx,cy),12,2)
+    pygame.draw.circle(surf,(80,200,130),(cx,cy),7,1)
+    pygame.draw.line(surf,(80,200,130),(cx-12,cy),(cx+12,cy),1)
+    pygame.draw.line(surf,(80,200,130),(cx,cy-12),(cx,cy+12),1)
+    t_ic=pygame.time.get_ticks()*0.001
+    px_=cx+int(math.cos(t_ic*1.8)*8); py_=cy+int(math.sin(t_ic*1.8)*5)
+    pygame.draw.circle(surf,(255,255,180),(px_,py_),3)
+
+
+_online_bg = None
+def make_online_bg():
+    s = pygame.Surface((OW, OH_PLAY))
+    for y in range(OH_PLAY):
+        t=y/OH_PLAY
+        pygame.draw.line(s,(int(18+t*12),int(95+t*40),int(82+t*35)),(0,y),(OW,y))
+    rng2=random.Random(55)
+    # 바닥 장식
+    for _ in range(18):
+        bx2=rng2.randint(10,OW-10); by2=rng2.randint(OH_PLAY-60,OH_PLAY-5)
+        pygame.draw.circle(s,(int(28+rng2.randint(0,20)),int(68+rng2.randint(0,20)),int(65+rng2.randint(0,15))),(bx2,by2),rng2.randint(4,14))
+    for _ in range(8):
+        sx2=rng2.randint(15,OW-15)
+        for seg in range(rng2.randint(3,8)):
+            sy2=OH_PLAY-seg*14-5
+            pygame.draw.rect(s,(50+rng2.randint(0,30),155+rng2.randint(0,30),60+rng2.randint(0,20)),(sx2,sy2,7,12))
+    return s
+
+
+def _draw_online_tentacles(surf, cx, cy, bw, bh, phase, moving):
+    tc = (228, 175, 132)
+    amp = 4.5 if moving else 1.8
+    for i, dx_f in enumerate([-0.28,-0.10,0.10,0.28]):
+        bx = cx + int(dx_f * bw)
+        base = int(bw * 0.18)
+        wave = int(math.sin(phase * 2.2 + i * 1.3) * bw * 0.06)
+        length = max(4, base + wave + int(amp * 2))
+        sway = int(math.sin(phase + i) * (1 + amp * 0.6))
+        s = pygame.Surface((12, length+8), pygame.SRCALPHA)
+        pygame.draw.line(s,(*tc,200),(6,0),(6+sway,length),2)
+        pygame.draw.circle(s,(*tc,180),(6+sway,length),max(2,length//6))
+        surf.blit(s,(bx-6, cy+bh//2))
+
+def _draw_online_chat_bubble(surf, cx, top_y, text):
+    fc = get_font(10, bold=True)
+    tw = fc.render(text, True, (30,30,50))
+    pad = 6
+    bw2 = min(tw.get_width()+pad*2, 160)
+    bh2 = tw.get_height()+pad
+    bx2 = max(2, min(OW-bw2-2, cx-bw2//2))
+    by2 = top_y - bh2 - 8
+    bs = pygame.Surface((bw2, bh2+6), pygame.SRCALPHA)
+    pygame.draw.rect(bs,(255,255,255,230),(0,0,bw2,bh2),border_radius=7)
+    pygame.draw.rect(bs,(180,220,180,180),(0,0,bw2,bh2),1,border_radius=7)
+    tip = min(max(bw2//2,8),bw2-8)
+    pygame.draw.polygon(bs,(255,255,255,230),[(tip-4,bh2),(tip+4,bh2),(tip,bh2+6)])
+    surf.blit(bs,(bx2,by2))
+    surf.blit(tw,(bx2+pad, by2+pad//2))
+
+
+def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_active, chat_ime, move_phase=0.0, local_chat='', local_chat_t=0):
+    global _online_bg
+    if _online_bg is None: _online_bg = make_online_bg()
+    surf.blit(_online_bg,(0,0))
+    sp_sz = 40; sp_h = int(sp_sz*0.75)
+    import time as _tm2; now2 = int(_tm2.time())
+
+    def _nick_chat(nick):
+        msgs = [m for m in chat_msgs if m.get('nick')==nick and now2-m.get('t',0)<10]
+        return msgs[-1].get('text','') if msgs else ''
+
+    moving = move_phase  # non-zero when moving
+    # 다른 플레이어
+    for nick,data in players.items():
+        px2=int(data.get('x',190)); py2=int(data.get('y',200))
+        spr2=pygame.transform.scale(PLAYER_BELL_SPRITE,(sp_sz,sp_h))
+        t_phase = data.get('phase', now2*2.0)
+        surf.blit(spr2,(px2-sp_sz//2,py2-sp_h//2))
+        _draw_online_tentacles(surf,px2,py2,sp_sz,sp_h,t_phase,False)
+        fn2=get_font(10,bold=True); nt2=fn2.render(data.get('nickname',nick),True,(255,255,255))
+        surf.blit(nt2,(px2-nt2.get_width()//2,py2-sp_h//2-14))
+        chat_t = _nick_chat(nick)
+        if chat_t: _draw_online_chat_bubble(surf,px2,py2-sp_h//2-14,chat_t)
+    # 로컬 플레이어
+    spr_l=pygame.transform.scale(PLAYER_BELL_SPRITE,(sp_sz,sp_h))
+    surf.blit(spr_l,(int(lx)-sp_sz//2,int(ly)-sp_h//2))
+    is_moving = any(online_keys.values()) if 'online_keys' in dir() else False
+    _draw_online_tentacles(surf,int(lx),int(ly),sp_sz,sp_h,move_phase,is_moving)
+    fn_l=get_font(10,bold=True); nt_l=fn_l.render(lnick,True,(255,240,140))
+    surf.blit(nt_l,(int(lx)-nt_l.get_width()//2,int(ly)-sp_h//2-14))
+    if local_chat and now2-local_chat_t<10:
+        _draw_online_chat_bubble(surf,int(lx),int(ly)-sp_h//2-14,local_chat)
+    # 채팅 영역
+    chat_bg=pygame.Surface((OW,OH_CHAT),pygame.SRCALPHA)
+    chat_bg.fill((5,15,35,215))
+    surf.blit(chat_bg,(0,OH_PLAY))
+    pygame.draw.line(surf,(40,100,80),(0,OH_PLAY),(OW,OH_PLAY),1)
+    fc2=get_font(11)
+    for idx,msg in enumerate(chat_msgs[-5:]):
+        col3=(255,240,140) if msg.get('nick')==lnick else (185,225,200)
+        mt=fc2.render(f"{msg.get('nick','?')}: {msg.get('text','')}", True, col3)
+        surf.blit(mt,(8, OH_PLAY+8+idx*18))
+    # 입력창
+    inp_y=OH_PLAY+OH_CHAT-30
+    inp_bg=pygame.Surface((OW-16,24),pygame.SRCALPHA)
+    inp_bg.fill((20,50,40,200) if chat_active else (12,30,25,180))
+    pygame.draw.rect(inp_bg,(60,160,100) if chat_active else (35,90,65),(0,0,OW-16,24),1,border_radius=5)
+    surf.blit(inp_bg,(8,inp_y))
+    disp2=(chat_input+chat_ime) if chat_active else '엔터키로 채팅 입력...'
+    col4=(220,245,220) if chat_active else (100,140,115)
+    fi2=get_font(11); ti2=fi2.render(disp2[:38],True,col4)
+    surf.blit(ti2,(12,inp_y+4))
+    # 나가기
+    bk=pygame.Surface((52,22),pygame.SRCALPHA)
+    bk.fill((25,55,40,210))
+    pygame.draw.rect(bk,(60,160,100),(0,0,52,22),1,border_radius=5)
+    surf.blit(bk,(OW-58,4))
+    fb2=get_font(11,bold=True); tb2=fb2.render('나가기',True,(155,225,175))
+    surf.blit(tb2,(OW-58+26-tb2.get_width()//2,7))
+    # 온라인 인원
+    fo2=get_font(10); to2=fo2.render(f'접속자 {len(players)+1}명',True,(120,195,155))
+    surf.blit(to2,(8,6))
+
+
+def draw_settings_icon(surf, rect):
+    x, y, w, h = rect.x, rect.y, rect.w, rect.h
+    cx, cy, r = x+w//2, y+h//2, 8
+    pygame.draw.circle(surf, (148,165,200), (cx,cy), r)
+    pygame.draw.circle(surf, (30,50,90), (cx,cy), r-3)
+    for i in range(6):
+        a = i*(math.pi/3)
+        tx=cx+int(math.cos(a)*(r+2)); ty=cy+int(math.sin(a)*(r+2))
+        pygame.draw.circle(surf,(148,165,200),(tx,ty),3)
+
+
+def draw_slider(surf, sx, sy, sw, value, color=(80,140,220)):
+    h = 24
+    # 트랙
+    pygame.draw.rect(surf,(25,40,80),(sx,sy+h//2-3,sw,6),border_radius=3)
+    # 채움
+    fill_w = max(6, int(sw*value))
+    pygame.draw.rect(surf,color,(sx,sy+h//2-3,fill_w,6),border_radius=3)
+    # 썸
+    tx = sx + int(sw*value)
+    pygame.draw.circle(surf,(220,230,255),(tx,sy+h//2),10)
+    pygame.draw.circle(surf,color,(tx,sy+h//2),8)
+
+
+def draw_settings_screen(surf, bgm_vol, sfx_vol, chat_vol=0.7):
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((5,10,30,245))
+    surf.blit(overlay,(0,0))
+    # 뒤로
+    bb = pygame.Surface((75,28),pygame.SRCALPHA)
+    bb.fill((22,42,88,210))
+    pygame.draw.rect(bb,(65,120,210),(0,0,75,28),1,border_radius=6)
+    surf.blit(bb,(15,12))
+    fb=get_font(13,bold=True); tb=fb.render('◀ 닫기',True,(165,210,255))
+    surf.blit(tb,(15+37-tb.get_width()//2,12+14-tb.get_height()//2))
+    # 제목
+    ft=get_font(19,bold=True); nt=ft.render('사운드 설정',True,(190,220,255))
+    surf.blit(nt,(WIDTH//2-nt.get_width()//2,14))
+    pygame.draw.line(surf,(50,90,160),(18,46),(WIDTH-18,46),1)
+    # BGM
+    fl=get_font(14,bold=True)
+    surf.blit(fl.render('BGM',True,(175,215,250)),(SL_BGM[0],SL_BGM[1]-28))
+    pct=get_font(13); tp=pct.render(f'{int(bgm_vol*100)}%',True,(220,235,255))
+    surf.blit(tp,(SL_BGM[0]+SL_BGM[2]-tp.get_width(),SL_BGM[1]-28))
+    draw_slider(surf,SL_BGM[0],SL_BGM[1],SL_BGM[2],bgm_vol,(65,145,230))
+    # 효과음
+    surf.blit(fl.render('효과음',True,(175,215,250)),(SL_SFX[0],SL_SFX[1]-28))
+    tp2=pct.render(f'{int(sfx_vol*100)}%',True,(220,235,255))
+    surf.blit(tp2,(SL_SFX[0]+SL_SFX[2]-tp2.get_width(),SL_SFX[1]-28))
+    draw_slider(surf,SL_SFX[0],SL_SFX[1],SL_SFX[2],sfx_vol,(65,200,145))
+    # 해파리 말소리
+    surf.blit(fl.render('해파리 말소리',True,(175,215,250)),(SL_CHAT[0],SL_CHAT[1]-28))
+    tp3=pct.render(f'{int(chat_vol*100)}%',True,(220,235,255))
+    surf.blit(tp3,(SL_CHAT[0]+SL_CHAT[2]-tp3.get_width(),SL_CHAT[1]-28))
+    draw_slider(surf,SL_CHAT[0],SL_CHAT[1],SL_CHAT[2],chat_vol,(200,130,220))
 
 
 def draw_ranking_icon(surf, rect):
@@ -2891,7 +3221,10 @@ class Jellyfish:
         self.drift_amp   = random.uniform(0.2,0.5)
         self.pulse       = random.uniform(0,math.pi*2)
         self.pulse_spd   = random.uniform(0.025,0.05)
-        self.squish_t    = -1
+        self.squish_t      = -1
+        self.chat_timer    = 0
+        self.chat_text     = ''
+        self.chat_cooldown = random.randint(180, 480)
         self.tent_phase  = random.uniform(0,math.pi*2)
         self.tent_spd    = random.uniform(0.04,0.07)
         self.burst_t     = -1
@@ -3137,6 +3470,18 @@ class Jellyfish:
             self.elec_phase+=0.45
         if self.is_demon:
             self.demon_phase+=0.05
+        # 말풍선
+        if self.chat_timer > 0:
+            self.chat_timer -= 1
+        else:
+            self.chat_cooldown -= 1
+            if self.chat_cooldown <= 0:
+                if random.random() < 0.10:
+                    self.chat_text  = random.choice(JELLY_CHAT_MSGS)
+                    self.chat_timer = 180
+                    opts_c = [s for s in [SND_CHAT1, SND_CHAT2] if s]
+                    if opts_c: random.choice(opts_c).play()
+                self.chat_cooldown = random.randint(300, 700)
         if self.is_golden:
             self._update_gold_particles()
         if self.is_sakura:
@@ -3383,6 +3728,32 @@ class Jellyfish:
                 t.set_alpha(int(p['life'] * 235))
                 surf.blit(t, (int(p['x'])-t.get_width()//2,
                               int(p['y'])-t.get_height()//2))
+
+        # 말풍선
+        if self.chat_timer > 0 and not self.is_dead:
+            t_c = self.chat_timer / 180.0
+            if t_c > 0.85: alpha_c = int((1.0-t_c)/0.15 * 245)
+            elif t_c < 0.20: alpha_c = int(t_c/0.20 * 245)
+            else: alpha_c = 245
+            fc = get_font(11, bold=True)
+            tw_c = fc.render(self.chat_text, True, (30,30,50))
+            pad = 8
+            bw_c = tw_c.get_width() + pad*2
+            bh_c = tw_c.get_height() + pad + 2
+            bx_c = max(2, min(WIDTH-bw_c-2, x - bw_c//2))
+            by_c = y - bh//2 - bh_c - 10
+            if by_c < 5: by_c = y + bh//2 + 10
+            # 말풍선 배경
+            bs_c = pygame.Surface((bw_c, bh_c+6), pygame.SRCALPHA)
+            pygame.draw.rect(bs_c, (255,255,255,alpha_c), (0,0,bw_c,bh_c), border_radius=8)
+            pygame.draw.rect(bs_c, (180,210,240,alpha_c), (0,0,bw_c,bh_c), 1, border_radius=8)
+            # 꼬리 삼각형
+            tip_x = min(max(bw_c//2, 8), bw_c-8)
+            pygame.draw.polygon(bs_c, (255,255,255,alpha_c),
+                                [(tip_x-5,bh_c),(tip_x+5,bh_c),(tip_x,bh_c+6)])
+            surf.blit(bs_c,(bx_c, by_c))
+            tw_c.set_alpha(alpha_c)
+            surf.blit(tw_c,(bx_c+pad, by_c+pad//2))
 
         # × 눈 (죽었을 때)
         if self.is_dead:
@@ -3905,11 +4276,114 @@ class Jellyfish:
                 surf.blit(s, (x-w//2-2, y-h//2-2))
 
 
-def make_bg():
-    s=pygame.Surface((WIDTH,HEIGHT))
+def make_bg_a():  # 배경 A: 심해 갓레이
+    s = pygame.Surface((WIDTH, HEIGHT))
     for y in range(HEIGHT):
-        c=lerp_color((3,8,30),(8,38,82),y/HEIGHT)
-        pygame.draw.line(s,c,(0,y),(WIDTH,y))
+        t = y / HEIGHT
+        pygame.draw.line(s,(int(2+t*4),int(8+t*18),int(38+t*35)),(0,y),(WIDTH,y))
+    ray = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    cx = WIDTH // 2
+    for y in range(HEIGHT):
+        yt = y / HEIGHT
+        ch = int(26 + yt * 55)
+        ba = max(0, int((1.0 - yt * 1.05) * 72))
+        for dx in range(-ch, ch + 1):
+            if 0 <= cx+dx < WIDTH:
+                fade = (1.0 - abs(dx)/(ch+1))**1.8
+                a = int(ba * fade)
+                if a > 0:
+                    br = int(fade * 85)
+                    ray.set_at((cx+dx,y),(min(255,br),min(255,br+75),min(255,br+175),a))
+    s.blit(ray,(0,0))
+    rock = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    lp = [(0,0),(0,HEIGHT),(52,HEIGHT),(62,495),(44,415),(74,345),
+          (50,272),(83,205),(58,135),(88,68),(70,0)]
+    rp = [(WIDTH,0),(WIDTH,HEIGHT),(WIDTH-46,HEIGHT),(WIDTH-60,505),
+          (WIDTH-36,425),(WIDTH-70,355),(WIDTH-46,280),(WIDTH-80,210),
+          (WIDTH-53,140),(WIDTH-86,72),(WIDTH-66,0)]
+    pygame.draw.polygon(rock,(6,13,40,235),lp)
+    pygame.draw.polygon(rock,(6,13,40,235),rp)
+    for i in range(4):
+        al=int(42*(4-i)//4)
+        pygame.draw.polygon(rock,(14,28,72,al),[(x+i*4,y) for x,y in lp])
+        pygame.draw.polygon(rock,(14,28,72,al),[(x-i*4,y) for x,y in rp])
+    s.blit(rock,(0,0))
+    ps = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    rng = random.Random(42)
+    for _ in range(50):
+        px=rng.randint(38,WIDTH-38); py=rng.randint(25,HEIGHT-25)
+        sz=rng.randint(1,3); a=rng.randint(70,215); br=rng.randint(155,255)
+        for ddx in range(sz):
+            for ddy in range(sz):
+                if 0<=px+ddx<WIDTH and 0<=py+ddy<HEIGHT:
+                    ps.set_at((px+ddx,py+ddy),(br,br,255,a))
+    s.blit(ps,(0,0))
+    return s
+
+
+def make_bg():  # 현재 사용 배경 (B or A)
+    return make_bg_a()
+
+
+def make_bg_b():  # 배경 B: 밝은 산호초
+    s = pygame.Surface((WIDTH, HEIGHT))
+    # 밝은 청록 그라디언트
+    for y in range(HEIGHT):
+        t = y / HEIGHT
+        pygame.draw.line(s,(int(22+t*14),int(158-t*60),int(195-t*62)),(0,y),(WIDTH,y))
+    # 수면 빛 라인 (상단)
+    sl = pygame.Surface((WIDTH,HEIGHT),pygame.SRCALPHA)
+    rng0=random.Random(5)
+    for i in range(10):
+        ly=12+i*7; lw=rng0.randint(35,115); lx=rng0.randint(15,WIDTH-130)
+        pygame.draw.rect(sl,(210,245,255,35),(lx,ly,lw,2))
+    s.blit(sl,(0,0))
+    # 식물/산호 레이어
+    pl=pygame.Surface((WIDTH,HEIGHT),pygame.SRCALPHA)
+    # 왼쪽 초록 해초
+    for sx,sh2,col3 in [(18,200,(68,168,52)),(34,165,(55,140,42)),(6,145,(85,188,65))]:
+        for seg in range(0,sh2,11):
+            wv=int(math.sin(seg*0.16)*5)
+            pygame.draw.rect(pl,(*col3,225),(sx+wv,HEIGHT-55-seg,8,11))
+    # 왼쪽 보라 산호
+    for cx3,cy3,cr3,col4 in [(58,HEIGHT-32,17,(145,72,175)),(43,HEIGHT-26,13,(120,58,155)),(72,HEIGHT-22,11,(165,85,190))]:
+        pygame.draw.circle(pl,(*col4,220),(cx3,cy3),cr3)
+    # 왼쪽 주황 산호
+    for dxx in range(-2,3):
+        pygame.draw.line(pl,(215,105,38,200),(16,HEIGHT-42),(16+dxx*18,HEIGHT-82),4)
+    # 오른쪽 암초 덩어리
+    rrp=[(WIDTH,HEIGHT),(WIDTH-92,HEIGHT),(WIDTH-88,HEIGHT-58),(WIDTH-72,HEIGHT-98),
+         (WIDTH-82,HEIGHT-148),(WIDTH-62,HEIGHT-178),(WIDTH-78,HEIGHT-218),
+         (WIDTH-55,HEIGHT-198),(WIDTH-38,HEIGHT-238),(WIDTH,HEIGHT-238)]
+    pygame.draw.polygon(pl,(25,42,85,242),rrp)
+    # 오른쪽 분홍 산호
+    for cx4,cy4,cr4,col5 in [(WIDTH-55,HEIGHT-248,21,(215,95,150)),(WIDTH-74,HEIGHT-233,14,(195,80,135)),(WIDTH-36,HEIGHT-240,11,(230,110,165))]:
+        pygame.draw.circle(pl,(*col5,225),(cx4,cy4),cr4)
+    # 오른쪽 주황 팬 산호
+    for dxx2 in range(-2,3):
+        pygame.draw.line(pl,(225,115,42,200),(WIDTH-28,HEIGHT-198),(WIDTH-28+dxx2*16,HEIGHT-238),3)
+    # 오른쪽 초록 해초 (높은)
+    for sx2,sh3,col6 in [(WIDTH-22,240,(68,168,52)),(WIDTH-12,205,(80,178,58))]:
+        for seg2 in range(0,sh3,11):
+            wv2=int(math.sin(seg2*0.14)*5)
+            pygame.draw.rect(pl,(*col6,225),(sx2+wv2,HEIGHT-55-seg2,8,11))
+    s.blit(pl,(0,0))
+    # 해저 바닥
+    bd=pygame.Surface((WIDTH,38),pygame.SRCALPHA)
+    rng2=random.Random(77)
+    for bx2 in range(0,WIDTH,8):
+        bh2=rng2.randint(14,32); bc2=(25+rng2.randint(0,12),42+rng2.randint(0,12),82+rng2.randint(0,12))
+        pygame.draw.rect(bd,(*bc2,235),(bx2,38-bh2,8,bh2))
+    s.blit(bd,(0,HEIGHT-38))
+    # 거품 방울
+    bs2=pygame.Surface((WIDTH,HEIGHT),pygame.SRCALPHA)
+    rng3=random.Random(99)
+    for i in range(14):
+        bpx2=WIDTH//2+rng3.randint(-28,28); bpy2=HEIGHT//2-i*28+rng3.randint(-8,8)
+        if 0<bpy2<HEIGHT:
+            pygame.draw.circle(bs2,(220,242,255,125),(bpx2,bpy2),3)
+            pygame.draw.circle(bs2,(255,255,255,85),(bpx2-1,bpy2-1),1)
+    s.blit(bs2,(0,0))
     return s
 
 
@@ -4020,7 +4494,12 @@ def main():
     bubbles     = [Bubble() for _ in range(22)]
     pop_bubbles    = []
     cult_doc_drops = []
-    inventory, loaded_stage, cult_docs, saved_aquarium, saved_bred, saved_nickname = load_game()
+    inventory, loaded_stage, cult_docs, saved_aquarium, saved_bred, saved_nickname, bgm_vol, sfx_vol, chat_vol = load_game()
+    pygame.mixer.music.set_volume(bgm_vol)
+    for _s, _v_base in [(SND_KILL,0.7),(SND_FEED,0.8),(SND_BUBBLE,0.5),(SND_BELL,0.7),(SND_FANFARE,0.8),(SND_AQUARIUM,0.6)]:
+        if _s: _s.set_volume(_v_base * sfx_vol)
+    for _s2 in [SND_CHAT1, SND_CHAT2]:
+        if _s2: _s2.set_volume(chat_vol)
     has_save = os.path.exists(SAVE_PATH)
     _bred_slots.update(saved_bred)
     update_unlocked_slots(inventory)
@@ -4031,6 +4510,20 @@ def main():
     cursor_blink        = 0
     show_ranking        = False
     show_new_game_warn  = False
+    show_settings       = False
+    show_online         = False
+    online_x            = float(OW//2)
+    online_y            = float(OH_PLAY//2)
+    online_keys         = {'w':False,'a':False,'s':False,'d':False}
+    online_chat_input   = ''
+    online_chat_ime     = ''
+    online_chat_active  = False
+    online_sync_t       = 0
+    online_fetch_t      = 0
+    online_move_phase   = 0.0
+    online_local_chat   = ''
+    online_local_chat_t = 0
+    settings_dragging   = None   # 'bgm', 'sfx', 'chat'
     if show_nickname_input:
         pygame.key.start_text_input()
     jellies = [Jellyfish(scattered=True) for _ in range(7)]
@@ -4064,6 +4557,7 @@ def main():
         '해파리를 죽이면 신비한 배양서를 얻을 수 있다는 전설이 있어',
         '해파리를 잡다보면 미획득 해파리도 볼 수 있을거야',
         '해파리를 어항에 넣으면 춤추는 해파리를 볼 수 있을거야. 아마도...',
+        '등급이 높은 해파리일수록 점수를 많이 모을 수 있어. 랭킹을 확인해 봐~',
     ]
     notice_x     = float(WIDTH)   # 현재 x 위치 (오른쪽에서 왼쪽으로)
     notice_idx   = 0
@@ -4117,7 +4611,24 @@ def main():
                         show_intro = False
 
             elif event.type == pygame.KEYDOWN:
-                if show_nickname_input:
+                if show_online and not online_chat_active:
+                    if event.key == pygame.K_RETURN:
+                        online_chat_active=True; pygame.key.start_text_input()
+                    elif event.key in (pygame.K_w,pygame.K_UP):    online_keys['w']=True
+                    elif event.key in (pygame.K_s,pygame.K_DOWN):  online_keys['s']=True
+                    elif event.key in (pygame.K_a,pygame.K_LEFT):  online_keys['a']=True
+                    elif event.key in (pygame.K_d,pygame.K_RIGHT): online_keys['d']=True
+                elif show_online and online_chat_active:
+                    if event.key == pygame.K_RETURN and online_chat_input.strip():
+                        import time as _tm3; online_local_chat=online_chat_input.strip(); online_local_chat_t=int(_tm3.time())
+                        send_online_chat(player_nickname, online_chat_input.strip())
+                        online_chat_input=''; online_chat_ime=''
+                        online_chat_active=False; pygame.key.stop_text_input()
+                    elif event.key == pygame.K_ESCAPE:
+                        online_chat_active=False; online_chat_input=''; pygame.key.stop_text_input()
+                    elif event.key == pygame.K_BACKSPACE and not online_chat_ime:
+                        online_chat_input=online_chat_input[:-1]
+                elif show_nickname_input:
                     if event.key == pygame.K_RETURN and nickname_text.strip():
                         player_nickname = nickname_text.strip()[:12]
                         show_nickname_input = False
@@ -4139,6 +4650,10 @@ def main():
                     elif aquarium_context is not None: aquarium_context = None
                     elif aquarium_adding: aquarium_adding = False
                     elif show_aquarium:   show_aquarium = False
+                    elif online_chat_active:         online_chat_active=False; pygame.key.stop_text_input()
+                    elif show_online:
+                        show_online=False; remove_online_player(player_nickname)
+                    elif show_settings:             show_settings = False; settings_dragging = None
                     elif show_ranking:              show_ranking = False
                     elif show_dev_reset:           show_dev_reset = False
                     elif show_dev_add:             show_dev_add = False
@@ -4151,26 +4666,75 @@ def main():
                         running = False
 
             elif event.type == pygame.TEXTINPUT:
-                if show_nickname_input and len(nickname_text) < 12:
-                    nickname_text += event.text
-                    ime_composition = ''
+                if online_chat_active and len(online_chat_input) < 40:
+                    online_chat_input += event.text; online_chat_ime = ''
+                elif show_nickname_input and len(nickname_text) < 12:
+                    nickname_text += event.text; ime_composition = ''
             elif event.type == pygame.TEXTEDITING:
-                if show_nickname_input:
-                    ime_composition = event.text
+                if online_chat_active: online_chat_ime = event.text
+                elif show_nickname_input: ime_composition = event.text
             elif event.type == pygame.MOUSEWHEEL:
                 if aquarium_adding:
                     aq_add_scroll = max(0, aq_add_scroll - event.y * 35)
+            elif event.type == pygame.KEYUP:
+                if show_online:
+                    if event.key in (pygame.K_w,pygame.K_UP):    online_keys['w']=False
+                    elif event.key in (pygame.K_s,pygame.K_DOWN):  online_keys['s']=False
+                    elif event.key in (pygame.K_a,pygame.K_LEFT):  online_keys['a']=False
+                    elif event.key in (pygame.K_d,pygame.K_RIGHT): online_keys['d']=False
             elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 aq_drag_y = None
+                if settings_dragging:
+                    settings_dragging = None
+                    save_game(inventory,_current_stage,cult_docs,aquarium,player_nickname,bgm_vol,sfx_vol)
             elif event.type == pygame.MOUSEMOTION:
-                if aquarium_adding and aq_drag_y is not None:
+                if settings_dragging:
+                    mx_m = event.pos[0]
+                    if settings_dragging == 'bgm':
+                        bgm_vol = max(0.0, min(1.0, (mx_m-SL_BGM[0])/SL_BGM[2]))
+                        pygame.mixer.music.set_volume(bgm_vol)
+                    elif settings_dragging == 'sfx':
+                        sfx_vol = max(0.0, min(1.0, (mx_m-SL_SFX[0])/SL_SFX[2]))
+                        for _s,_vb in [(SND_KILL,0.7),(SND_FEED,0.8),(SND_BUBBLE,0.5),(SND_BELL,0.7),(SND_FANFARE,0.8),(SND_AQUARIUM,0.6)]:
+                            if _s: _s.set_volume(_vb*sfx_vol)
+                    elif settings_dragging == 'chat':
+                        chat_vol = max(0.0, min(1.0, (mx_m-SL_CHAT[0])/SL_CHAT[2]))
+                        for _sc in [SND_CHAT1,SND_CHAT2]:
+                            if _sc: _sc.set_volume(chat_vol)
+                elif aquarium_adding and aq_drag_y is not None:
                     aq_add_scroll = max(0, aq_add_scroll - (event.pos[1] - aq_drag_y))
                     aq_drag_y = event.pos[1]
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 mx, my = event.pos
 
                 if event.button == 1:
-                    if show_ranking:
+                    if show_online:
+                        # 나가기 버튼
+                        if pygame.Rect(OW-58,4,52,22).collidepoint(mx,my):
+                            show_online=False; remove_online_player(player_nickname)
+                        # 채팅창 클릭
+                        inp_y=OH_PLAY+OH_CHAT-30
+                        if pygame.Rect(8,inp_y,OW-16,24).collidepoint(mx,my):
+                            online_chat_active=True; pygame.key.start_text_input()
+                    elif show_settings:
+                        if pygame.Rect(15,12,75,28).collidepoint(mx,my):
+                            show_settings = False
+                            save_game(inventory,_current_stage,cult_docs,aquarium,player_nickname,bgm_vol,sfx_vol)
+                        elif SL_BGM[0]<=mx<=SL_BGM[0]+SL_BGM[2] and abs(my-(SL_BGM[1]+12))<=16:
+                            settings_dragging='bgm'
+                            bgm_vol=max(0.0,min(1.0,(mx-SL_BGM[0])/SL_BGM[2]))
+                            pygame.mixer.music.set_volume(bgm_vol)
+                        elif SL_SFX[0]<=mx<=SL_SFX[0]+SL_SFX[2] and abs(my-(SL_SFX[1]+12))<=16:
+                            settings_dragging='sfx'
+                            sfx_vol=max(0.0,min(1.0,(mx-SL_SFX[0])/SL_SFX[2]))
+                            for _s,_vb in [(SND_KILL,0.7),(SND_FEED,0.8),(SND_BUBBLE,0.5),(SND_BELL,0.7),(SND_FANFARE,0.8),(SND_AQUARIUM,0.6)]:
+                                if _s: _s.set_volume(_vb*sfx_vol)
+                        elif SL_CHAT[0]<=mx<=SL_CHAT[0]+SL_CHAT[2] and abs(my-(SL_CHAT[1]+12))<=16:
+                            settings_dragging='chat'
+                            chat_vol=max(0.0,min(1.0,(mx-SL_CHAT[0])/SL_CHAT[2]))
+                            for _sc in [SND_CHAT1,SND_CHAT2]:
+                                if _sc: _sc.set_volume(chat_vol)
+                    elif show_ranking:
                         if pygame.Rect(15,12,75,28).collidepoint(mx,my):
                             show_ranking = False
                     elif aquarium_adding:
@@ -4233,6 +4797,7 @@ def main():
                                     aquarium.append(slot5)
                                     aquarium_fish_list.append(AquariumFish(slot5))
                                     inventory[slot5] = inventory.get(slot5,0) - 1
+                                    save_game(inventory,_current_stage,cult_docs,aquarium,player_nickname,bgm_vol,sfx_vol)
                                     if len(aquarium) >= 5:
                                         aquarium_adding = False
                                     break
@@ -4241,6 +4806,7 @@ def main():
                         if aquarium_context is not None:
                             if aquarium_context.get_feed_rect().collidepoint(mx,my):
                                 aquarium_context.fish.feed()
+                                if SND_FEED: SND_FEED.play()
                                 for _ in range(3):
                                     food_pellets.append(FoodPellet(
                                         aquarium_context.fish.x,
@@ -4251,9 +4817,11 @@ def main():
                                 aquarium_fish_list.remove(f_rel)
                                 di_r = f_rel.design_idx
                                 aquarium.remove(di_r)
+                                if SND_RELEASE: SND_RELEASE.play()
                                 # 방생: 바다로 보냄 — 발견 기록 유지(0으로 남김)
                                 if di_r not in inventory:
                                     inventory[di_r] = 0
+                                save_game(inventory,_current_stage,cult_docs,aquarium,player_nickname,bgm_vol,sfx_vol)
                                 aquarium_context = None
                             else:
                                 aquarium_context = None
@@ -4266,6 +4834,8 @@ def main():
                             for f_obj in aquarium_fish_list:
                                 if f_obj.hit_test(mx, my):
                                     f_obj.click_squish = 1.0
+                                    opts_sq = [s for s in [SND_SQUEAK1,SND_SQUEAK2] if s]
+                                    if opts_sq: random.choice(opts_sq).play()
                                     for _ in range(random.randint(3,5)):
                                         pop_bubbles.append(PopBubble(f_obj.x, f_obj.y))
                                     break
@@ -4286,6 +4856,7 @@ def main():
                                     if inventory.get(a_s,0)>0 and inventory.get(b_s,0)>0:
                                         gacha_slot  = result_d
                                         gacha_timer = GACHA_TOTAL
+                                        if SND_FANFARE: SND_FANFARE.play()
                                         show_scroll = False; scroll_doc_detail = None
                             else:
                                 # 뒤로 버튼 or 아무 곳이나 클릭 → 목록으로
@@ -4333,6 +4904,7 @@ def main():
                         if context.get_kill_rect().collidepoint(mx, my):
                             j_killed = context.jelly
                             j_killed.kill()
+                            if SND_KILL: SND_KILL.play()
                             # 무지개 배양서: 유령(9) 또는 슬라임(6) 해파리 죽일 때 10%
                             if j_killed.design_idx in (6, 9) and cult_docs.get(1,0)==0 and random.random()<0.10:
                                 cult_docs[1]=1; has_new_doc=True
@@ -4359,6 +4931,7 @@ def main():
                             context = None
                         elif context.get_catch_rect().collidepoint(mx, my):
                             j = context.jelly
+                            if SND_BUBBLE: SND_BUBBLE.play()
                             old_unlocked = frozenset(_unlocked_slots)
                             inventory[j.design_idx] = inventory.get(j.design_idx,0)+1
                             has_new = True
@@ -4372,6 +4945,7 @@ def main():
                                 newest = max(new_slots)
                                 unlock_msg   = f'{JELLY_NAMES[newest]}가 출몰하기 시작했어!'
                                 unlock_timer = 180
+                                if SND_BELL: SND_BELL.play()
                             for _ in range(random.randint(6,10)):
                                 pop_bubbles.append(PopBubble(j.x,j.y))
                             jellies.remove(j)
@@ -4380,22 +4954,37 @@ def main():
                         else:
                             context = None
                     elif BAG_RECT.collidepoint(mx, my):
+                        play_ui_click()
                         show_bag = True; has_new = False; show_scroll = False
                         context = None; inv_page = 0; inv_detail = None
                     elif SCROLL_RECT.collidepoint(mx, my):
+                        play_ui_click()
                         show_scroll = True; has_new_doc = False
                         show_bag = False; show_aquarium = False; inv_detail = None; context = None
                     elif AQUARIUM_RECT.collidepoint(mx, my):
                         show_aquarium = True
+                        if SND_AQUARIUM: SND_AQUARIUM.play()
                         show_bag = False; show_scroll = False; context = None
                     elif RANKING_RECT.collidepoint(mx, my):
+                        play_ui_click()
                         show_ranking = True; show_ranking_back = pygame.Rect(15,12,75,28)
                         fetch_rankings_bg()
+                        show_bag=False; show_scroll=False; show_aquarium=False; context=None
+                    elif ONLINE_RECT.collidepoint(mx, my) and player_nickname:
+                        show_online = True
+                        online_x = float(OW//2); online_y = float(OH_PLAY//2)
+                        online_keys = {'w':False,'a':False,'s':False,'d':False}
+                        fetch_online_bg(player_nickname)
+                        show_bag=False; show_scroll=False; show_aquarium=False
+                    elif SETTINGS_RECT.collidepoint(mx, my):
+                        play_ui_click()
+                        show_settings = True
                         show_bag=False; show_scroll=False; show_aquarium=False; context=None
                     else:
                         for j in jellies:
                             if j.hit_test(mx, my):
                                 j.trigger()
+                                if SND_BUBBLE: SND_BUBBLE.play()
                                 for _ in range(random.randint(4,7)):
                                     pop_bubbles.append(PopBubble(j.x,j.y))
                                 break
@@ -4435,6 +5024,32 @@ def main():
         draw_scroll_icon(screen, SCROLL_RECT, has_new_doc)
         draw_aquarium_icon(screen, AQUARIUM_RECT)
         draw_ranking_icon(screen, RANKING_RECT)
+        draw_settings_icon(screen, SETTINGS_RECT)
+        draw_online_icon(screen, ONLINE_RECT)
+        if show_online:
+            # WASD 이동
+            spd = 2.5
+            if online_keys['w'] and not online_chat_active: online_y = max(30, online_y-spd)
+            if online_keys['s'] and not online_chat_active: online_y = min(OH_PLAY-30, online_y+spd)
+            if online_keys['a'] and not online_chat_active: online_x = max(20, online_x-spd)
+            if online_keys['d'] and not online_chat_active: online_x = min(OW-20, online_x+spd)
+            # 위치 동기화
+            online_sync_t += 1
+            if online_sync_t >= 18:
+                online_sync_t = 0
+                sync_online_pos(player_nickname, online_x, online_y)
+            online_fetch_t += 1
+            if online_fetch_t >= 60:
+                online_fetch_t = 0
+                fetch_online_bg(player_nickname)
+            is_mv = any(online_keys[k] for k in online_keys)
+            if is_mv: online_move_phase += 0.18
+            draw_online_world(screen, online_x, online_y, player_nickname,
+                              _online_players, _online_chat,
+                              online_chat_input, online_chat_active, online_chat_ime,
+                              online_move_phase, online_local_chat, online_local_chat_t)
+        if show_settings:
+            draw_settings_screen(screen, bgm_vol, sfx_vol, chat_vol)
         if show_ranking:
             draw_ranking_screen(screen, _rankings_cache, _rankings_loading, player_nickname)
         if show_nickname_input and not show_intro:
