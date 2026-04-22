@@ -8,7 +8,7 @@ import threading
 import urllib.request as _url_req
 import webbrowser
 
-VERSION = '3.2.0'
+VERSION = '3.2.1'
 _latest_ver  = None   # None=확인중, ''=최신, 버전문자열=업데이트있음
 _release_url = ''
 
