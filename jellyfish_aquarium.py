@@ -5766,11 +5766,12 @@ def main():
                         online_x = float(OW//2); online_y = float(OH_PLAY//2)
                         online_keys = {'w':False,'a':False,'s':False,'d':False}
                         online_npc_t = 0.0; online_selected = None; online_pushed = {}; online_push_anim_t = 0
-                        _online_players['__npc__'] = {
-                            'x': float(OW//2+60), 'y': float(OH_PLAY//2-40),
-                            'cur_x': float(OW//2+60), 'cur_y': float(OH_PLAY//2-40),
-                            'nickname': '테스트NPC', 'last_seen': 0
-                        }
+                        if DEV_MODE:
+                            _online_players['__npc__'] = {
+                                'x': float(OW//2+60), 'y': float(OH_PLAY//2-40),
+                                'cur_x': float(OW//2+60), 'cur_y': float(OH_PLAY//2-40),
+                                'nickname': '테스트NPC', 'last_seen': 0
+                            }
                         start_sse_stream(player_nickname)
                         fetch_online_bg(player_nickname)
                         show_bag=False; show_scroll=False; show_aquarium=False
@@ -5863,22 +5864,23 @@ def main():
                 online_action_timer -= 1
                 online_action_phase += 0.15
                 if online_action_timer == 0: online_action = None
-            # 테스트 NPC 이동 (밀치기 중엔 멈춤) — SSE가 삭제해도 마지막 위치로 복원
-            if '__npc__' not in _online_players:
-                _online_players['__npc__'] = {
-                    'x': online_npc_cur_x, 'y': online_npc_cur_y,
-                    'cur_x': online_npc_cur_x, 'cur_y': online_npc_cur_y,
-                    'nickname': '테스트NPC', 'last_seen': 0
-                }
-            _npc = _online_players['__npc__']
-            if '__npc__' not in online_pushed:
-                online_npc_t += 0.018
-                _npc['x'] = OW//2 + 60 + math.sin(online_npc_t)*50
-                _npc['y'] = OH_PLAY//2 - 40 + math.cos(online_npc_t*0.7)*30
-                _npc['cur_x'] = _npc['x']; _npc['cur_y'] = _npc['y']
-            _npc['phase'] = online_npc_t * 3.0
-            online_npc_cur_x = float(_npc.get('cur_x', online_npc_cur_x))
-            online_npc_cur_y = float(_npc.get('cur_y', online_npc_cur_y))
+            # 테스트 NPC (DEV_MODE 전용)
+            if DEV_MODE:
+                if '__npc__' not in _online_players:
+                    _online_players['__npc__'] = {
+                        'x': online_npc_cur_x, 'y': online_npc_cur_y,
+                        'cur_x': online_npc_cur_x, 'cur_y': online_npc_cur_y,
+                        'nickname': '테스트NPC', 'last_seen': 0
+                    }
+                _npc = _online_players['__npc__']
+                if '__npc__' not in online_pushed:
+                    online_npc_t += 0.018
+                    _npc['x'] = OW//2 + 60 + math.sin(online_npc_t)*50
+                    _npc['y'] = OH_PLAY//2 - 40 + math.cos(online_npc_t*0.7)*30
+                    _npc['cur_x'] = _npc['x']; _npc['cur_y'] = _npc['y']
+                _npc['phase'] = online_npc_t * 3.0
+                online_npc_cur_x = float(_npc.get('cur_x', online_npc_cur_x))
+                online_npc_cur_y = float(_npc.get('cur_y', online_npc_cur_y))
             # 밀치기 타이머 감소 + 피격자 위치 이동
             new_pushed = {}
             for _pk,_pv in online_pushed.items():
