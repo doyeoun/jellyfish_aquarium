@@ -8,7 +8,7 @@ import threading
 import urllib.request as _url_req
 import webbrowser
 
-VERSION = '3.1.0'
+VERSION = '3.2.0'
 _latest_ver  = None   # None=확인중, ''=최신, 버전문자열=업데이트있음
 _release_url = ''
 
@@ -103,20 +103,48 @@ def upload_score_bg(nickname, score):
 # ── 온라인 멀티플레이 ─────────────────────────────────────────
 _online_players = {}   # nick → {x,y,nickname,last_seen}
 _online_chat    = []   # [{nick,text,time}]
+_push_events    = {}   # nick → {vx,vy,t} 최신 push 이벤트
 
-def sync_online_pos(nick, x, y):
+def sync_online_pos(nick, x, y, action=None, action_phase=0.0, equipped_item=None):
     def _s():
         try:
             import urllib.request as _ur, urllib.parse as _up2, json as _j, time as _tm
             safe = _up2.quote(nick, safe='')
             url  = FIREBASE_URL + f"online/{safe}.json"
-            data = _j.dumps({"x":int(x),"y":int(y),"nickname":nick,
-                              "last_seen":int(_tm.time())}).encode()
+            payload = {"x":int(x),"y":int(y),"nickname":nick,"last_seen":int(_tm.time())}
+            if action: payload['action'] = action; payload['action_phase'] = round(action_phase, 2)
+            else:      payload['action'] = ''; payload['action_phase'] = 0.0
+            payload['equipped'] = equipped_item or ''
+            data = _j.dumps(payload).encode()
             req  = _ur.Request(url,data=data,method='PUT',
                                headers={'Content-Type':'application/json','User-Agent':'jellyfish-game'})
             _ur.urlopen(req,timeout=3)
         except: pass
     import threading as _t; _t.Thread(target=_s,daemon=True).start()
+
+def send_push_event(target_nick, vx, vy):
+    def _p():
+        try:
+            import urllib.request as _ur, urllib.parse as _up3, json as _j, time as _tm
+            safe = _up3.quote(target_nick, safe='')
+            data = _j.dumps({'vx':round(vx,2),'vy':round(vy,2),'t':int(_tm.time())}).encode()
+            req  = _ur.Request(FIREBASE_URL+f'push_events/{safe}.json',data=data,method='PUT',
+                               headers={'Content-Type':'application/json','User-Agent':'jellyfish-game'})
+            _ur.urlopen(req,timeout=3)
+        except: pass
+    import threading as _t; _t.Thread(target=_p,daemon=True).start()
+
+def fetch_push_events():
+    def _fp():
+        global _push_events
+        try:
+            import urllib.request as _ur, json as _j, time as _tm
+            req = _ur.Request(FIREBASE_URL+'push_events.json',headers={'User-Agent':'jellyfish-game'})
+            with _ur.urlopen(req,timeout=3) as r: data=_j.loads(r.read()) or {}
+            now = int(_tm.time())
+            _push_events = {k:v for k,v in data.items() if now-v.get('t',0)<4}
+        except: pass
+    import threading as _t; _t.Thread(target=_fp,daemon=True).start()
 
 def remove_online_player(nick):
     def _r():
@@ -227,7 +255,11 @@ def fetch_rankings_bg():
         _rankings_loading = False
     import threading as _t; _t.Thread(target=_fetch, daemon=True).start()
 
-def save_game(inventory, stage, cult_docs=None, aquarium=None, nickname='', bgm_vol=0.35, sfx_vol=0.7, chat_vol=0.7):
+_wardrobe_cache = {'items': set(), 'equipped': None}
+
+def save_game(inventory, stage, cult_docs=None, aquarium=None, nickname='', bgm_vol=0.35, sfx_vol=0.7, chat_vol=0.7, wardrobe_items=None, equipped_item=None):
+    wd = wardrobe_items if wardrobe_items is not None else _wardrobe_cache['items']
+    eq = equipped_item if equipped_item is not None else _wardrobe_cache['equipped']
     data = {
         'inventory': {str(k): v for k, v in inventory.items()},
         'stage': stage,
@@ -238,6 +270,8 @@ def save_game(inventory, stage, cult_docs=None, aquarium=None, nickname='', bgm_
         'bgm_vol':    bgm_vol,
         'sfx_vol':    sfx_vol,
         'chat_vol':   chat_vol,
+        'wardrobe':   list(wd),
+        'equipped_item': eq or '',
     }
     try:
         with open(SAVE_PATH, 'w', encoding='utf-8') as f:
@@ -247,7 +281,7 @@ def save_game(inventory, stage, cult_docs=None, aquarium=None, nickname='', bgm_
 
 def load_game():
     if not os.path.exists(SAVE_PATH):
-        return {}, 1, {}, [], set(), '', 0.35, 0.7, 0.7
+        return {}, 1, {}, [], set(), '', 0.35, 0.7, 0.7, set(), None
     try:
         with open(SAVE_PATH, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -260,9 +294,12 @@ def load_game():
         bgm_vol    = float(data.get('bgm_vol', 0.35))
         sfx_vol    = float(data.get('sfx_vol', 0.7))
         chat_vol   = float(data.get('chat_vol', 0.7))
-        return inv, stage, cult_docs, aquarium, bred_slots, nickname, bgm_vol, sfx_vol, chat_vol
+        raw_w = data.get('wardrobe', [])
+        wardrobe = set(raw_w) if isinstance(raw_w, list) else set(raw_w.keys())
+        equipped_item_sv = data.get('equipped_item', '') or None
+        return inv, stage, cult_docs, aquarium, bred_slots, nickname, bgm_vol, sfx_vol, chat_vol, wardrobe, equipped_item_sv
     except Exception:
-        return {}, 1, {}, [], set(), '', 0.35, 0.7, 0.7
+        return {}, 1, {}, [], set(), '', 0.35, 0.7, 0.7, set(), None
 
 try:
     import ctypes
@@ -1295,6 +1332,27 @@ def make_player_bell_sprite():
 
 PLAYER_BELL_SPRITE = make_player_bell_sprite()
 
+def _make_headset_sprite():
+    _path = r'C:\Users\dorong\Downloads\49b430fecb4afb177a81492554d7a983.jpg'
+    if not os.path.exists(_path): return None
+    try:
+        raw = pygame.image.load(_path)
+        # 작업 크기로 축소 후 배경 제거
+        sz = 96
+        small = pygame.transform.scale(raw, (sz, sz))
+        result = pygame.Surface((sz, sz), pygame.SRCALPHA)
+        result.fill((0,0,0,0))
+        for _y in range(sz):
+            for _x in range(sz):
+                _r,_g,_b = small.get_at((_x,_y))[:3]
+                # 흰색/밝은 회색 배경 제거
+                if _r > 225 and _g > 225 and _b > 225: continue
+                result.set_at((_x,_y), (_r,_g,_b,255))
+        return result
+    except: return None
+
+HEADSET_SPRITE = _make_headset_sprite()
+
 def make_twin_bell_sprite():
     """쌍둥이 해파리: 두 머리가 공유 몸통으로 붙은 커스텀 20×8 아트."""
     TWIN_W = 20
@@ -1413,6 +1471,40 @@ SL_CHAT = (50, 321, WIDTH-100)
 AQ_L, AQ_R, AQ_T, AQ_B = 18, WIDTH-18, 82, HEIGHT-72
 AQUARIUM_ADD_BTN = pygame.Rect(WIDTH//2-52, HEIGHT-46, 104, 30)
 AQ_BACK_RECT     = pygame.Rect(15, 12, 75, 28)
+AQ_WARDROBE_RECT = pygame.Rect(WIDTH-46, 46, 30, 28)
+WARDROBE_ITEM_DEFS = [
+    ('angel_halo',    '천사 링'),
+    ('crown',         '황금 왕관'),
+    ('glasses',       '동그란 안경'),
+    ('ribbon',        '분홍 리본'),
+    ('hat',           '마법사 모자'),
+    ('redcap',        '빨간 캡모자'),
+    ('headset',       '헤드셋'),
+    ('deep_orb',      '심해 구슬'),
+    ('angry_brow',    '화난 눈썹'),
+    ('rabbit_ears',   '토끼 귀'),
+    ('cherry_top',    '체리 토핑'),
+    ('frog_hat_item', '개구리 모자'),
+    ('foxfire',       '여우불'),
+    ('blossom_pin',   '벚꽃 핀'),
+]
+# 특정 해파리만 드랍 가능 (design_idx → item_id 목록). 없으면 공용 드랍
+WARDROBE_DROP_MAP = {
+    11: ['crown'],             # 해파리 왕
+    16: ['hat'],               # 멋쟁이 해파리
+    3:  ['glasses'],           # 안경 해파리
+    23: ['ribbon'],            # 파분 해파리
+    13: ['deep_orb'],          # 심해 해파리
+    15: ['angry_brow'],        # 화난 해파리
+    17: ['rabbit_ears'],       # 토끼 해파리
+    24: ['cherry_top'],        # 푸딩 해파리
+    25: ['cherry_top'],        # 소다맛 푸딩 해파리
+    2:  ['frog_hat_item'],     # 개구리 모자 해파리
+    18: ['foxfire'],           # 저주받은 해파리
+    26: ['blossom_pin'],       # 벚꽃 해파리
+    8:  ['angel_halo'],        # 천사 해파리
+}
+WARDROBE_COMMON_DROPS = ['redcap', 'headset']
 DEV_RESET_BACK   = pygame.Rect(15, 12, 75, 28)
 
 def draw_bag_icon(surf, rect, has_new):
@@ -1478,6 +1570,53 @@ def draw_aquarium_icon(surf, rect):
 
 
 # ── 어항 해파리 ───────────────────────────────────────────────
+class GlassBottle:
+    _LAND_Y = AQ_B - 26
+
+    def __init__(self, x, spawn_y=None, item=None):
+        self.x = float(x)
+        self.y = float(spawn_y if spawn_y is not None else AQ_T + 10)
+        self.vy = 0.25
+        self.landed = False
+        self.bounce_v = 0.0
+        if item is None: item = random.choice(WARDROBE_ITEM_DEFS)
+        self.item_id, self.item_name = item
+        self.collected = False
+
+    def update(self):
+        if self.collected: return False
+        if not self.landed:
+            self.vy = min(self.vy + 0.04, 3.2)
+            self.y += self.vy
+            if self.y >= self._LAND_Y:
+                self.y = self._LAND_Y
+                self.vy = -self.vy * 0.32
+                if abs(self.vy) < 0.6: self.landed = True; self.vy = 0
+        else:
+            if self.bounce_v != 0:
+                self.y += self.bounce_v
+                self.bounce_v *= 0.7
+                if abs(self.bounce_v) < 0.2: self.bounce_v = 0
+        return True
+
+    def hit_test(self, mx, my):
+        return abs(mx - self.x) < 14 and abs(my - self.y) < 24
+
+    def draw(self, surf):
+        x, y = int(self.x), int(self.y)
+        # bottle neck
+        pygame.draw.rect(surf, (155, 208, 238), (x-3, y-20, 6, 10), border_radius=2)
+        # cork
+        pygame.draw.rect(surf, (195, 155, 88), (x-4, y-24, 8, 5), border_radius=2)
+        # body
+        pygame.draw.ellipse(surf, (148, 208, 240), (x-9, y-12, 18, 20))
+        pygame.draw.ellipse(surf, (90, 165, 210), (x-9, y-12, 18, 20), 1)
+        # shine
+        pygame.draw.line(surf, (215, 242, 255), (x-4, y-8), (x-4, y+2), 2)
+        # scroll inside
+        pygame.draw.rect(surf, (245, 235, 200), (x-3, y-5, 7, 8), border_radius=1)
+
+
 class AquariumFish:
     def __init__(self, design_idx):
         self.design_idx = design_idx
@@ -1563,7 +1702,7 @@ class AquariumFish:
                     for k_e in range(seg_e): pygame.draw.rect(surf,col_e,(sx_e+k_e*ps_e,sy_e+k_e*ps_e,ps_e,ps_e))
                 pygame.draw.rect(surf,(255,255,215),(sx_e,sy_e,ps_e,ps_e))
         surf.blit(spr, (x-bw//2, y-bh//2))
-        _draw_slot_overlay(surf, self.design_idx, x, y-bh//2+4, bw, bh)
+        _draw_slot_overlay(surf, self.design_idx, x, y-bh//2+4, bw, bh, happy=self.happy_timer>0)
 
         # 눈웃음 (∩ 모양)
         defn_aq = JELLY_DEFS[bi]
@@ -1674,6 +1813,209 @@ class AquariumContextMenu:
                           rect.y+rect.h//2-ft.get_height()//2))
 
 
+def draw_wardrobe_item_icon(surf, cx, cy, item_id, unlocked=True):
+    c = lambda lit, dim: lit if unlocked else dim
+    if item_id == 'angel_halo':
+        hc = c((255,225,28),(60,80,110))
+        pygame.draw.ellipse(surf, hc, (cx-10,cy-5,20,8), 2)
+        pygame.draw.ellipse(surf, c((255,245,140),(70,90,120)), (cx-7,cy-4,14,5), 1)
+    elif item_id == 'ribbon':
+        rc = c((254,107,149),(60,80,110))
+        pygame.draw.circle(surf, rc, (cx-5,cy), 6)
+        pygame.draw.circle(surf, rc, (cx+5,cy), 6)
+        pygame.draw.circle(surf, c((255,160,185),(70,90,120)), (cx,cy), 4)
+    elif item_id == 'crown':
+        cc = c((255,210,55),(60,80,110))
+        pts = [(cx-11,cy+5),(cx-7,cy-6),(cx,cy+1),(cx+7,cy-6),(cx+11,cy+5)]
+        pygame.draw.polygon(surf, cc, pts)
+        for px2 in [cx-7,cx,cx+7]: pygame.draw.circle(surf,c((255,230,100),(70,90,120)),(px2,cy-4),2)
+    elif item_id == 'glasses':
+        gc = c((30,30,30),(60,80,110))
+        pygame.draw.circle(surf, gc, (cx-6,cy), 5, 2)
+        pygame.draw.circle(surf, gc, (cx+6,cy), 5, 2)
+        pygame.draw.line(surf, gc, (cx-1,cy),(cx+1,cy), 1)
+        pygame.draw.line(surf, gc, (cx-11,cy-1),(cx-11,cy+3), 1)
+        pygame.draw.line(surf, gc, (cx+11,cy-1),(cx+11,cy+3), 1)
+    elif item_id == 'pearl':
+        pc = c((245,245,255),(60,80,110))
+        for ppx in range(-2,3): pygame.draw.circle(surf, pc, (cx+ppx*6,cy), 4)
+        for ppx in range(-2,3): pygame.draw.circle(surf, c((255,255,255),(70,90,120)), (cx+ppx*6-1,cy-1), 1)
+    elif item_id in ('bow', 'ribbon'):
+        rc2 = c((254,107,149),(60,80,110))
+        pygame.draw.circle(surf, rc2, (cx-6,cy), 6)
+        pygame.draw.circle(surf, rc2, (cx+6,cy), 6)
+        pygame.draw.circle(surf, c((255,160,185),(70,90,120)), (cx,cy), 4)
+        pygame.draw.line(surf, c((255,190,210),(50,65,95)), (cx,cy-4),(cx,cy+4),2)
+    elif item_id == 'hat':
+        hc = c((85,45,150),(60,80,110))
+        pygame.draw.ellipse(surf, hc, (cx-11,cy+3,22,7))
+        pygame.draw.rect(surf, hc, (cx-5,cy-10,10,15))
+        pygame.draw.line(surf, c((205,165,255),(70,90,120)), (cx-4,cy-2),(cx+4,cy-2), 1)
+    elif item_id == 'redcap':
+        rd = c((185,25,25),(45,55,85)); rm = c((220,40,40),(60,80,110)); rl = c((255,115,115),(70,90,120))
+        # 돔 (큰 반원, cx 중심)
+        dome = [(int(cx-1+11*math.cos(math.radians(a))), int(cy+4-11*math.sin(math.radians(a)))) for a in range(0,181,10)]
+        pygame.draw.polygon(surf, rm, [(cx-12,cy+4)]+dome+[(cx+10,cy+4)])
+        # 밴드 라인
+        pygame.draw.line(surf, rd, (cx-12,cy+4),(cx+10,cy+4), 2)
+        # 챙 (오른쪽, 살짝 아래)
+        pygame.draw.polygon(surf, rd, [(cx+8,cy+3),(cx+16,cy+6),(cx+14,cy+8),(cx+7,cy+5)])
+        # 하이라이트
+        pygame.draw.arc(surf, rl, (cx-7,cy-7,12,9), math.radians(35), math.radians(145), 1)
+        # 버튼 (상단)
+        pygame.draw.rect(surf, rd, (cx-1,cy-7,3,2), border_radius=1)
+    elif item_id == 'deep_orb':
+        dc = c((48,218,178),(50,65,95))
+        dg = c((180,255,235),(60,80,110))
+        # 줄기
+        pygame.draw.line(surf, c((35,165,130),(45,60,90)), (cx,cy+2),(cx,cy-7), 2)
+        # 외부 글로우
+        gs = pygame.Surface((18,18),pygame.SRCALPHA)
+        pygame.draw.circle(gs, (*c((48,218,178),(55,70,105)), 60), (9,9), 8)
+        surf.blit(gs,(cx-9,cy-17))
+        # 구슬 본체
+        pygame.draw.circle(surf, dc, (cx,cy-9), 6)
+        pygame.draw.circle(surf, dg, (cx-1,cy-11), 3)
+        pygame.draw.circle(surf, c((220,255,242),(60,80,110)), (cx-2,cy-11), 1)
+    elif item_id == 'rabbit_ears':
+        ec = c((28,20,28),(50,60,90)); ic = c((255,172,192),(65,75,110))
+        for ex in (cx-6, cx+6):
+            pygame.draw.rect(surf, ec, (ex-3,cy-12,6,12), border_radius=3)
+            pygame.draw.rect(surf, ic, (ex-2,cy-11,4,9), border_radius=2)
+    elif item_id == 'cherry_top':
+        # 생크림
+        for cxo2,cyo2 in [(0,-4),(-4,0),(4,0),(0,0)]:
+            pygame.draw.circle(surf, c((245,245,245),(65,80,115)), (cx+cxo2,cy+cyo2), 5)
+        # 체리
+        pygame.draw.circle(surf, c((148,8,8),(50,60,90)), (cx,cy-8), 5)
+        pygame.draw.circle(surf, c((195,18,18),(60,70,100)), (cx,cy-8), 4)
+        pygame.draw.line(surf, c((120,15,15),(45,55,85)), (cx,cy-13),(cx+3,cy-18), 1)
+    elif item_id == 'frog_hat_item':
+        fc2 = c((45,155,68),(50,65,90)); fl2 = c((85,208,100),(65,80,110))
+        # 챙
+        pygame.draw.ellipse(surf, fc2, (cx-11,cy+2,22,6))
+        # 모자 몸통
+        pygame.draw.rect(surf, fc2, (cx-7,cy-8,14,12), border_radius=2)
+        # 개구리 눈 돌출
+        for ex2 in (cx-4, cx+4):
+            pygame.draw.circle(surf, fl2, (ex2,cy-9), 3)
+            pygame.draw.circle(surf, (15,15,25) if unlocked else (40,50,70), (ex2,cy-9), 1)
+    elif item_id == 'foxfire':
+        ft2 = pygame.time.get_ticks()*0.001
+        for fi in range(3):
+            fa = ft2*0.9 + fi*(math.pi*2/3)
+            fx2 = cx + int(math.cos(fa)*9); fy2 = cy + int(math.sin(fa)*6)
+            fr2 = int(2+abs(math.sin(ft2*3+fi))*2)
+            frc = int(175+abs(math.sin(ft2*2+fi))*80)
+            fgc = int(8+abs(math.sin(ft2*2+fi))*28)
+            gs3 = pygame.Surface((fr2*4+2,fr2*4+2),pygame.SRCALPHA)
+            pygame.draw.circle(gs3,(frc,fgc,5,50),(fr2*2+1,fr2*2+1),fr2*2)
+            surf.blit(gs3,(fx2-fr2*2-1,fy2-fr2*2-1))
+            pygame.draw.circle(surf,c((frc,fgc,5),(50,60,90)),(fx2,fy2),max(1,fr2))
+    elif item_id == 'blossom_pin':
+        def _blossom(sx,sy,sr,col_p,col_c):
+            for _bi in range(5):
+                _ba=math.radians(_bi*72-90)
+                pygame.draw.circle(surf,col_p,(int(sx+math.cos(_ba)*sr),int(sy+math.sin(_ba)*sr)),sr)
+            pygame.draw.circle(surf,col_c,(sx,sy),max(1,sr//2+1))
+        bp_col = c((254,117,156),(55,65,100)); bc_col = c((255,230,100),(65,75,110))
+        _blossom(cx-7,cy-3,4,bp_col,bc_col)
+        _blossom(cx+7,cy-3,4,bp_col,bc_col)
+        pygame.draw.line(surf,c((180,140,160),(45,55,85)),(cx-7,cy+1),(cx-7,cy+7),1)
+        pygame.draw.line(surf,c((180,140,160),(45,55,85)),(cx+7,cy+1),(cx+7,cy+7),1)
+    elif item_id == 'angry_brow':
+        ac2 = c((40,18,10),(50,60,90))
+        thick2 = 3 if unlocked else 2
+        # 왼쪽 눈썹 \ (바깥높음, 안낮음)
+        pygame.draw.line(surf, ac2, (cx-10,cy-6),(cx-3,cy-2), thick2)
+        # 오른쪽 눈썹 / (안낮음, 바깥높음)
+        pygame.draw.line(surf, ac2, (cx+3,cy-2),(cx+10,cy-6), thick2)
+    elif item_id == 'headset':
+        bk = c((12,12,12),(42,52,82)); dg = c((50,50,50),(50,60,90)); pd = c((8,8,10),(40,50,80))
+        # 왼쪽 이어컵 (동그란)
+        pygame.draw.ellipse(surf, dg, (cx-14,cy-5,8,11))
+        pygame.draw.ellipse(surf, bk, (cx-14,cy-5,8,11), 1)
+        pygame.draw.ellipse(surf, pd, (cx-13,cy-4,6,9))
+        # 오른쪽 이어컵 (동그란)
+        pygame.draw.ellipse(surf, dg, (cx+6,cy-5,8,11))
+        pygame.draw.ellipse(surf, bk, (cx+6,cy-5,8,11), 1)
+        pygame.draw.ellipse(surf, pd, (cx+7,cy-4,6,9))
+        # 헤드밴드 아치
+        pygame.draw.arc(surf, bk, (cx-10,cy-13,20,16), 0, math.pi, 2)
+
+
+def draw_wardrobe_icon(surf, rect, has_new=False):
+    x, y, w, h = rect
+    col = (175, 210, 248)
+    pygame.draw.rect(surf, (42, 72, 125), (x+2,y+2,w-4,h-4), border_radius=4)
+    pygame.draw.rect(surf, col, (x+2,y+2,w-4,h-4), 2, border_radius=4)
+    cx2 = x + w//2
+    pygame.draw.line(surf, col, (cx2, y+6), (cx2, y+h-4), 1)
+    pygame.draw.circle(surf, col, (cx2-5, y+h//2), 2)
+    pygame.draw.circle(surf, col, (cx2+5, y+h//2), 2)
+    pygame.draw.line(surf, (140, 180, 225), (x+5,y+8), (x+w-5,y+8), 1)
+    if has_new:
+        pygame.draw.circle(surf, (255,70,70), (x+w-3,y+3), 5)
+        pygame.draw.circle(surf, (255,150,150), (x+w-3,y+3), 3)
+
+
+def draw_wardrobe_screen(surf, wardrobe_items, equipped_item=None, context_item=None):
+    overlay = pygame.Surface((WIDTH,HEIGHT),pygame.SRCALPHA)
+    overlay.fill((4,12,35,248))
+    surf.blit(overlay,(0,0))
+    bb = pygame.Surface((75,28),pygame.SRCALPHA); bb.fill((18,38,88,210))
+    pygame.draw.rect(bb,(65,128,218),(0,0,75,28),1,border_radius=6); surf.blit(bb,(15,12))
+    fb=get_font(13,bold=True); tb=fb.render('◀ 뒤로',True,(160,210,255))
+    surf.blit(tb,(15+37-tb.get_width()//2, 12+14-tb.get_height()//2))
+    ft=get_font(18,bold=True); nt=ft.render('유저 해파리 옷장',True,(178,222,255))
+    surf.blit(nt,(WIDTH//2-nt.get_width()//2, 14))
+    pygame.draw.line(surf,(50,90,160),(18,48),(WIDTH-18,48),1)
+    cw,ch = 82,80; cols = 4; gap = 6
+    total_w = cols*(cw+gap)-gap
+    sx = (WIDTH-total_w)//2; sy = 58
+    for i,(item_id,item_name) in enumerate(WARDROBE_ITEM_DEFS):
+        ci = i%cols; ri = i//cols
+        ix = sx + ci*(cw+gap); iy = sy + ri*(ch+gap)
+        acquired = item_id in wardrobe_items
+        is_eq = (item_id == equipped_item)
+        slot=pygame.Surface((cw,ch),pygame.SRCALPHA)
+        slot.fill((22,60,115,220) if acquired else (10,25,55,145))
+        border_col = (255,210,60) if is_eq else ((72,135,215) if acquired else (35,65,115))
+        pygame.draw.rect(slot,border_col,(0,0,cw,ch),2 if is_eq else 1,border_radius=8)
+        surf.blit(slot,(ix,iy))
+        if acquired:
+            # 착용중 배지
+            if is_eq:
+                bw2,bh2=44,16
+                eq_s=pygame.Surface((bw2,bh2),pygame.SRCALPHA)
+                eq_s.fill((200,155,0,230))
+                pygame.draw.rect(eq_s,(255,215,60),(0,0,bw2,bh2),1,border_radius=4)
+                surf.blit(eq_s,(ix+cw//2-bw2//2, iy-8))
+                fe=get_font(10,bold=True); te=fe.render('착용중',True,(255,240,180))
+                surf.blit(te,(ix+cw//2-te.get_width()//2, iy-7))
+            draw_wardrobe_item_icon(surf, ix+cw//2, iy+ch//2-6, item_id, True)
+            fn2=get_font(10); tn2=fn2.render(item_name,True,(200,235,255))
+            surf.blit(tn2,(ix+cw//2-tn2.get_width()//2, iy+ch-17))
+        else:
+            fq=get_font(16,bold=True); tq=fq.render('???',True,(75,105,160))
+            surf.blit(tq,(ix+cw//2-tq.get_width()//2, iy+ch//2-tq.get_height()//2-4))
+            fn2=get_font(10); tn2=fn2.render('???',True,(55,80,125))
+            surf.blit(tn2,(ix+cw//2-tn2.get_width()//2, iy+ch-17))
+    # 우클릭 팝업
+    if context_item and context_item in wardrobe_items:
+        ci2 = next((j for j,(iid,_) in enumerate(WARDROBE_ITEM_DEFS) if iid==context_item), 0)
+        px3 = sx + (ci2%cols)*(cw+gap); py3 = sy + (ci2//cols)*(ch+gap)
+        pw,ph = 80,32; pop_x=min(px3+cw+4, WIDTH-pw-4); pop_y=max(py3,4)
+        pop_s=pygame.Surface((pw,ph),pygame.SRCALPHA); pop_s.fill((18,42,95,240))
+        is_eq2 = (context_item==equipped_item)
+        lbl = '착용 해제' if is_eq2 else '착용'
+        bcol = (200,80,80) if is_eq2 else (60,140,240)
+        pygame.draw.rect(pop_s,bcol,(0,0,pw,ph),1,border_radius=6)
+        surf.blit(pop_s,(pop_x,pop_y))
+        fp=get_font(13,bold=True); tp=fp.render(lbl,True,(230,240,255))
+        surf.blit(tp,(pop_x+pw//2-tp.get_width()//2, pop_y+ph//2-tp.get_height()//2))
+
+
 def draw_aquarium_screen(surf, fish_list):
     # 배경
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
@@ -1727,6 +2069,8 @@ def draw_aquarium_screen(surf, fish_list):
     # 물고기
     for f in fish_list:
         f.draw(surf)
+    # 옷장 아이콘
+    draw_wardrobe_icon(surf, AQ_WARDROBE_RECT)
     # 마리 수
     fc2 = get_font(13)
     ct2 = fc2.render(f'{len(fish_list)} / 5 마리', True,(172,215,252))
@@ -1974,7 +2318,7 @@ def _draw_online_chat_bubble(surf, cx, top_y, text):
     surf.blit(tw,(bx2+pad, by2+pad//2))
 
 
-def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_active, chat_ime, move_phase=0.0, local_chat='', local_chat_t=0, interact_open=False, action=None, action_phase=0.0):
+def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_active, chat_ime, move_phase=0.0, local_chat='', local_chat_t=0, interact_open=False, action=None, action_phase=0.0, selected=None, pushed=None, push_anim_t=0, push_dir=(1,0), equipped_item=None, self_pushed=None):
     global _online_bg
     if _online_bg is None: _online_bg = make_online_bg()
     surf.blit(_online_bg,(0,0))
@@ -1986,26 +2330,74 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
         return msgs[-1].get('text','') if msgs else ''
 
     moving = move_phase  # non-zero when moving
+    if pushed is None: pushed = {}
     # 다른 플레이어
     for nick,data in players.items():
         px2=int(data.get('cur_x', data.get('x',190))); py2=int(data.get('cur_y', data.get('y',200)))
         spr2=pygame.transform.scale(PLAYER_BELL_SPRITE,(sp_sz,sp_h))
         t_phase = data.get('phase', now2*2.0)
-        surf.blit(spr2,(px2-sp_sz//2,py2-sp_h//2))
-        _draw_online_tentacles(surf,px2,py2,sp_sz,sp_h,t_phase,False)
+        if nick in pushed:
+            pv = pushed[nick]; pt = pv['timer']
+            # 빠르게 쓰러짐: 처음 15프레임에 0→-90도
+            angle = -90.0 * min(1.0, (pv['max_t']-pt) / 15.0) if pt > pv['max_t']-15 else -90.0
+            rot2 = pygame.transform.rotate(spr2, angle)
+            surf.blit(rot2,(px2-rot2.get_width()//2,py2-rot2.get_height()//2))
+        else:
+            surf.blit(spr2,(px2-sp_sz//2,py2-sp_h//2))
+            _draw_online_tentacles(surf,px2,py2,sp_sz,sp_h,t_phase,False)
         fn2=get_font(10,bold=True); nt2=fn2.render(data.get('nickname',nick),True,(255,255,255))
         surf.blit(nt2,(px2-nt2.get_width()//2,py2-sp_h//2-14))
         chat_t = _nick_chat(nick)
         if chat_t: _draw_online_chat_bubble(surf,px2,py2-sp_h//2-14,chat_t)
+        # 다른 플레이어 착용 아이템
+        _p_equip = data.get('equipped','')
+        if _p_equip and nick not in pushed:
+            draw_player_item(surf,px2,py2,sp_sz,sp_h,_p_equip)
+        # 다른 플레이어 액션 애니메이션
+        _p_action = data.get('action','')
+        if _p_action and nick not in pushed:
+            _draw_online_action(surf,px2,py2,sp_sz,sp_h,_p_action,data.get('action_phase',0.0))
+        # 밀치기 버튼: 근접 시에만 표시 (55px 이내)
+        dist_to_local = math.hypot(px2-lx, py2-ly)
+        if selected == nick and nick not in pushed and dist_to_local < 55:
+            bw,bh = 60,24
+            bx2 = max(2, min(OW-bw-2, px2-bw//2))
+            by2 = max(2, py2-sp_h//2-36)
+            btn_s = pygame.Surface((bw,bh),pygame.SRCALPHA)
+            btn_s.fill((200,65,35,235))
+            pygame.draw.rect(btn_s,(255,140,100),(0,0,bw,bh),1,border_radius=5)
+            surf.blit(btn_s,(bx2,by2))
+            fb3=get_font(13,bold=True); tb3=fb3.render('밀치기',True,(255,235,220))
+            surf.blit(tb3,(bx2+bw//2-tb3.get_width()//2,by2+bh//2-tb3.get_height()//2))
     # 로컬 플레이어
     spr_l=pygame.transform.scale(PLAYER_BELL_SPRITE,(sp_sz,sp_h))
-    surf.blit(spr_l,(int(lx)-sp_sz//2,int(ly)-sp_h//2))
-    is_moving = any(online_keys.values()) if 'online_keys' in dir() else False
-    _draw_online_tentacles(surf,int(lx),int(ly),sp_sz,sp_h,move_phase,is_moving)
+    if self_pushed:
+        _sp_t = self_pushed['timer']; _sp_max = self_pushed.get('max_t',70)
+        _ang_s = -90.0*min(1.0,(_sp_max-_sp_t)/15.0) if _sp_t>_sp_max-15 else -90.0
+        rot_l = pygame.transform.rotate(spr_l, _ang_s)
+        surf.blit(rot_l,(int(lx)-rot_l.get_width()//2,int(ly)-rot_l.get_height()//2))
+    else:
+        surf.blit(spr_l,(int(lx)-sp_sz//2,int(ly)-sp_h//2))
+        is_moving = any(online_keys.values()) if 'online_keys' in dir() else False
+        _draw_online_tentacles(surf,int(lx),int(ly),sp_sz,sp_h,move_phase,is_moving)
+    _nick_extra = {'hat':12,'deep_orb':16,'rabbit_ears':8,'frog_hat_item':8,'cherry_top':10,'angel_halo':10}.get(equipped_item or '',0)
     fn_l=get_font(10,bold=True); nt_l=fn_l.render(lnick,True,(255,240,140))
-    surf.blit(nt_l,(int(lx)-nt_l.get_width()//2,int(ly)-sp_h//2-14))
+    _nick_y = int(ly)-sp_h//2-14-_nick_extra
+    surf.blit(nt_l,(int(lx)-nt_l.get_width()//2, _nick_y))
+    draw_player_item(surf, int(lx), int(ly), sp_sz, sp_h, equipped_item)
     if local_chat and now2-local_chat_t<10:
-        _draw_online_chat_bubble(surf,int(lx),int(ly)-sp_h//2-14,local_chat)
+        _draw_online_chat_bubble(surf,int(lx),_nick_y,local_chat)
+    # 밀치기 팔 애니메이션
+    if push_anim_t > 0:
+        _max_t = 18
+        prog = 1.0 - push_anim_t / _max_t
+        extend = math.sin(prog * math.pi)  # 0→peak→0
+        arm_len = int(extend * 32)
+        skin = (228,175,132)
+        ax = int(lx + push_dir[0] * (sp_sz//2 + arm_len))
+        ay = int(ly + push_dir[1] * (sp_h//2 + arm_len))
+        pygame.draw.line(surf, skin, (int(lx), int(ly)), (ax, ay), 4)
+        pygame.draw.circle(surf, skin, (ax, ay), 6)
     # 로컬 액션
     if move_phase and hasattr(move_phase,'__float__'):
         _draw_online_tentacles(surf,int(lx),int(ly),sp_sz,sp_h,move_phase,any(online_keys.values()) if 'online_keys' in dir() else False)
@@ -2030,11 +2422,16 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
     fi2=get_font(11); ti2=fi2.render(disp2[:38],True,col4)
     surf.blit(ti2,(12,inp_y+4))
     # 액션 애니메이션 (로컬)
+    if equipped_item == 'angel_halo':
+        hlw = int(sp_sz*0.80); hlh = max(1,int(hlw*3//11))
+        hls = pygame.transform.scale(HALO_BASE,(hlw,hlh))
+        halo_y = int(ly)-sp_h//2-hlh-3+int(math.sin(move_phase)*2)
+        surf.blit(hls,(int(lx)-hlw//2, halo_y))
     if action:
         _draw_online_action(surf,int(lx),int(ly),sp_sz,sp_h,action,action_phase)
     # 휠 아이콘
     wx_icon=OW-20; wy_icon=OH_PLAY-20
-    draw_online_wheel_icon(surf,wx_icon,wy_icon,interact_open)
+    draw_online_jelly_icon(surf,wx_icon,wy_icon,interact_open)
     if interact_open:
         draw_online_interact_list(surf,wx_icon,wy_icon,action)
     # 나가기
@@ -2049,12 +2446,154 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
     surf.blit(to2,(8,6))
 
 
-def draw_online_wheel_icon(surf, x, y, highlighted=False):
-    col = (120,220,165) if highlighted else (80,165,120)
-    pygame.draw.ellipse(surf, col, (x-9,y-14,18,26), 2)
-    pygame.draw.rect(surf, col, (x-3,y-7,6,10), border_radius=2)
-    pygame.draw.polygon(surf, col, [(x,y-10),(x-4,y-6),(x+4,y-6)])
-    pygame.draw.polygon(surf, col, [(x,y+4),(x-4,y),(x+4,y)])
+def draw_player_item(surf, cx, cy, bw, bh, item_id):
+    if not item_id: return
+    if item_id == 'angel_halo':
+        hlw2 = int(bw*0.80); hlh2 = max(1,int(hlw2*3//11))
+        hls2 = pygame.transform.scale(HALO_BASE,(hlw2,hlh2))
+        surf.blit(hls2,(cx-hlw2//2, cy-bh//2-hlh2-3))
+    elif item_id == 'crown':
+        pts = [(cx-9,cy-bh//2+1),(cx-5,cy-bh//2-8),(cx,cy-bh//2-3),(cx+5,cy-bh//2-8),(cx+9,cy-bh//2+1)]
+        pygame.draw.polygon(surf,(255,210,50),pts)
+        for px4 in [cx-5,cx,cx+5]: pygame.draw.circle(surf,(255,235,100),(px4,cy-bh//2-5),2)
+    elif item_id == 'glasses':
+        gy = cy + bh//8 + 3
+        pygame.draw.circle(surf,(30,30,30),(cx-7,gy),7,2)
+        pygame.draw.circle(surf,(30,30,30),(cx+7,gy),7,2)
+        pygame.draw.line(surf,(30,30,30),(cx-1,gy),(cx+1,gy),1)
+        pygame.draw.line(surf,(30,30,30),(cx-14,gy-1),(cx-14,gy+3),1)
+        pygame.draw.line(surf,(30,30,30),(cx+14,gy-1),(cx+14,gy+3),1)
+    elif item_id == 'ribbon':
+        ry = cy - bh//2 + 2
+        pygame.draw.circle(surf,(254,107,149),(cx-6,ry),6)
+        pygame.draw.circle(surf,(254,107,149),(cx+6,ry),6)
+        pygame.draw.circle(surf,(255,160,185),(cx,ry),4)
+        pygame.draw.line(surf,(255,190,210),(cx,ry-3),(cx,ry+3),2)
+    elif item_id == 'hat':
+        hy = cy - bh//2
+        pygame.draw.ellipse(surf,(80,40,145),(cx-11,hy+1,22,7))
+        pygame.draw.rect(surf,(80,40,145),(cx-6,hy-13,12,15))
+        pygame.draw.line(surf,(195,155,255),(cx-5,hy-4),(cx+5,hy-4),1)
+        pygame.draw.circle(surf,(255,215,80),(cx,hy-13),3)
+    elif item_id == 'redcap':
+        ry2 = cy - bh//2 + 5
+        # 돔 (큰 반원)
+        dome2 = [(int(cx-1+13*math.cos(math.radians(a))), int(ry2+5-13*math.sin(math.radians(a)))) for a in range(0,181,10)]
+        pygame.draw.polygon(surf,(220,40,40),[(cx-14,ry2+5)]+dome2+[(cx+12,ry2+5)])
+        # 밴드
+        pygame.draw.line(surf,(185,25,25),(cx-14,ry2+5),(cx+12,ry2+5),2)
+        # 챙 (오른쪽)
+        pygame.draw.polygon(surf,(185,25,25),[(cx+10,ry2+4),(cx+22,ry2+7),(cx+20,ry2+10),(cx+9,ry2+6)])
+        # 하이라이트
+        pygame.draw.arc(surf,(255,115,115),(cx-8,ry2-8,14,10),math.radians(35),math.radians(145),1)
+        # 버튼
+        pygame.draw.rect(surf,(185,25,25),(cx-1,ry2-9,4,2),border_radius=1)
+    elif item_id == 'deep_orb':
+        sy3 = cy - bh//2
+        # 줄기
+        pygame.draw.line(surf,(80,175,205),(cx,sy3),(cx,sy3-10),2)
+        # 글로우
+        gs2 = pygame.Surface((20,20),pygame.SRCALPHA)
+        pygame.draw.circle(gs2,(48,218,178,55),(10,10),9)
+        surf.blit(gs2,(cx-10,sy3-20))
+        # 구슬
+        pygame.draw.circle(surf,(48,218,178),(cx,sy3-10),6)
+        pygame.draw.circle(surf,(180,255,235),(cx-1,sy3-12),3)
+        pygame.draw.circle(surf,(220,255,242),(cx-2,sy3-13),1)
+    elif item_id == 'angry_brow':
+        col_ab = (14,8,8)
+        thick_ab = max(2, bw//11)
+        eye_y_ab = cy + bh//8
+        eby_ab   = eye_y_ab - bh//7
+        ox_ab    = bw//5
+        # 왼쪽 눈썹 \
+        pygame.draw.line(surf, col_ab,
+                         (cx - bw//8 - ox_ab//2, eby_ab - bh//18),
+                         (cx - bw//8 + ox_ab//2, eby_ab + bh//18), thick_ab)
+        # 오른쪽 눈썹 /
+        pygame.draw.line(surf, col_ab,
+                         (cx + bw//8 - ox_ab//2, eby_ab + bh//18),
+                         (cx + bw//8 + ox_ab//2, eby_ab - bh//18), thick_ab)
+    elif item_id == 'headset':
+        hy3 = cy - bh//4  # 아래로 내림
+        _bk = (12,12,12); _dg = (50,50,50); _pd = (8,8,10)
+        ec_w, ec_h = 10, 14  # 작게
+        # 왼쪽 이어컵 (동그란 타원)
+        _lx = cx - bw//2 - 3
+        pygame.draw.ellipse(surf, _dg, (_lx, hy3, ec_w, ec_h))
+        pygame.draw.ellipse(surf, _bk, (_lx, hy3, ec_w, ec_h), 1)
+        pygame.draw.ellipse(surf, _pd, (_lx+1, hy3+1, ec_w-2, ec_h-2))
+        # 오른쪽 이어컵 (동그란 타원)
+        _rx = cx + bw//2 - 7
+        pygame.draw.ellipse(surf, _dg, (_rx, hy3, ec_w, ec_h))
+        pygame.draw.ellipse(surf, _bk, (_rx, hy3, ec_w, ec_h), 1)
+        pygame.draw.ellipse(surf, _pd, (_rx+1, hy3+1, ec_w-2, ec_h-2))
+        # 헤드밴드 아치
+        _aw = _rx + ec_w//2 - (_lx + ec_w//2)
+        _ax = _lx + ec_w//2
+        pygame.draw.arc(surf, _bk, (_ax, hy3-8, _aw, 14), 0, math.pi, 2)
+    elif item_id == 'rabbit_ears':
+        rew = int(bw*0.55); reh = max(1, int(rew*6//8))
+        res = pygame.transform.scale(RABBIT_EARS_BASE, (rew, reh))
+        surf.blit(res, (cx-rew//2, cy-bh//2-reh+reh//4))
+    elif item_id == 'cherry_top':
+        bell_top = cy - bh//2
+        cr2 = max(4, bw//9)
+        cy2 = bell_top - cr2 + 2
+        # 생크림
+        for cxo3,cyo3 in [(0,-cr2//3),(-cr2//2,0),(cr2//2,0),(0,0)]:
+            pygame.draw.circle(surf,(245,245,245),(cx+cxo3,cy2+cyo3),cr2)
+        # 체리
+        chr_r2 = max(3, bw//10)
+        chr_y2 = cy2 - cr2 + 2
+        pygame.draw.circle(surf,(148,8,8),(cx,chr_y2),chr_r2)
+        pygame.draw.circle(surf,(195,18,18),(cx,chr_y2),chr_r2-1)
+        pygame.draw.circle(surf,(235,55,55),(cx-chr_r2//3,chr_y2-chr_r2//3),max(1,chr_r2//3))
+        pygame.draw.line(surf,(120,15,15),(cx,chr_y2-chr_r2),(cx+chr_r2//2,chr_y2-chr_r2-max(4,bw//8)),1)
+    elif item_id == 'frog_hat_item':
+        hw2 = int(bw*0.82); hh2 = max(1,int(hw2*5//10))
+        fhs = pygame.transform.scale(FROG_HAT_BASE,(hw2,hh2))
+        surf.blit(fhs,(cx-hw2//2, cy-bh//2-hh2+hh2//3))
+    elif item_id == 'blossom_pin':
+        def _bp2(sx,sy,sr):
+            for _bi2 in range(5):
+                _ba2=math.radians(_bi2*72-90)
+                pygame.draw.circle(surf,(254,117,156),(int(sx+math.cos(_ba2)*sr),int(sy+math.sin(_ba2)*sr)),sr)
+            pygame.draw.circle(surf,(255,230,100),(sx,sy),max(1,sr//2+1))
+        pin_y = cy - bh//4
+        pin_x_l = cx - bw//2 + 4; pin_x_r = cx + bw//2 - 4
+        pygame.draw.line(surf,(180,140,160),(pin_x_l,pin_y+4),(pin_x_l,pin_y+10),1)
+        pygame.draw.line(surf,(180,140,160),(pin_x_r,pin_y+4),(pin_x_r,pin_y+10),1)
+        _bp2(pin_x_l, pin_y, 4); _bp2(pin_x_r, pin_y, 4)
+    elif item_id == 'foxfire':
+        _t_ff = pygame.time.get_ticks()*0.001
+        for _i_ff in range(5):
+            _a_ff = _t_ff*0.9 + _i_ff*(math.pi*2/5)
+            _rx_ff = bw*(0.68+math.sin(_t_ff*0.35+_i_ff*1.8)*0.22)
+            _ry_ff = bh*(0.58+math.cos(_t_ff*0.42+_i_ff*2.1)*0.20)
+            _ox = cx + int(math.cos(_a_ff)*_rx_ff)
+            _oy = cy + int(math.sin(_a_ff)*_ry_ff)
+            _fl = 0.55+abs(math.sin(_t_ff*7.1+_i_ff*2.9))*0.45
+            _or = max(2,int((2+abs(math.sin(_t_ff*4.3+_i_ff))*3)*_fl))
+            _r2 = int(175+_fl*80); _g2 = int(8+_fl*28)
+            _gs4 = pygame.Surface((_or*4+2,_or*4+2),pygame.SRCALPHA)
+            _gs4.fill((0,0,0,0))
+            pygame.draw.circle(_gs4,(_r2,_g2,5,int(18*_fl)),(_or*2+1,_or*2+1),_or*2)
+            surf.blit(_gs4,(_ox-_or*2-1,_oy-_or*2-1))
+            pygame.draw.circle(surf,(_r2,_g2,5),(_ox,_oy),_or)
+            pygame.draw.circle(surf,(255,min(255,_g2+60),25),(_ox,_oy),max(1,_or-1))
+
+
+def draw_online_jelly_icon(surf, x, y, highlighted=False):
+    col = (165,245,200) if highlighted else (90,180,130)
+    # bell (dome)
+    pygame.draw.ellipse(surf, col, (x-9,y-12,18,14))
+    # inner sheen
+    sc = tuple(min(255,c+50) for c in col)
+    pygame.draw.ellipse(surf, sc, (x-5,y-10,8,5))
+    # tentacles
+    for dx in (-6,-2,2,6):
+        pygame.draw.line(surf, col, (x+dx,y+2),(x+dx-1,y+10),1)
 
 
 def draw_online_interact_list(surf, wx, wy, action):
@@ -2597,7 +3136,7 @@ class ContextMenu:
 def _slot_base_idx(slot):
     return {0:0,1:1,2:0,3:0,4:2,5:0,6:3,7:4,8:5,9:6,10:7,11:8,12:9,13:10,14:11,15:12,16:13,17:14,18:15,19:16,20:17,21:18,22:23,23:24,24:19,25:20,26:21,27:22}.get(slot,0)
 
-def _draw_slot_overlay(surf, slot, pcx, pcy, sw, sh):
+def _draw_slot_overlay(surf, slot, pcx, pcy, sw, sh, happy=False):
     """slot_idx에 따라 모자/안경/스파크/귀/코 오버레이 그리기."""
     if slot == 2:
         hw=int(sw*0.82); hh=int(hw*5//10)
@@ -2741,16 +3280,17 @@ def _draw_slot_overlay(surf, slot, pcx, pcy, sw, sh):
         pygame.draw.line(surf, (14,8,8),
                          (pcx+sw//8-ox16//2, eby16+sh//18),
                          (pcx+sw//8+ox16//2, eby16-sh//18), thick16)
-        # 팔
-        for s16 in (-1,1):
-            shx16 = pcx+s16*(sw//2-2); shy16 = pcy+sh//5
-            elx16 = pcx+s16*int(sw*0.72); ely16 = shy16+int(sh*0.42)
-            hax16 = pcx+s16*int(sw*0.18); hay16 = ely16+int(sh*0.10)
-            pygame.draw.line(surf,col16,(shx16,shy16),(elx16,ely16),max(2,sw//14))
-            pygame.draw.line(surf,col16,(elx16,ely16),(hax16,hay16),max(2,sw//14))
+        # 팔 (행복/댄스 중엔 숨김)
+        if not happy:
+            for s16 in (-1,1):
+                shx16 = pcx+s16*(sw//2-2); shy16 = pcy+sh//5
+                elx16 = pcx+s16*int(sw*0.72); ely16 = shy16+int(sh*0.42)
+                hax16 = pcx+s16*int(sw*0.18); hay16 = ely16+int(sh*0.10)
+                pygame.draw.line(surf,col16,(shx16,shy16),(elx16,ely16),max(2,sw//14))
+                pygame.draw.line(surf,col16,(elx16,ely16),(hax16,hay16),max(2,sw//14))
     # slot 15 (구름 해파리)는 기본 스프라이트 그대로 표시
     elif slot == 13:  # 심해 해파리: 발광 낚싯대 간략 표시
-        stalk_y = pcy - sh//2 - 4
+        stalk_y = pcy - 4  # 실제 머리 꼭대기 (pcy = bell_top + 4)
         mid_x   = pcx + 4
         tip_x   = pcx + 8
         tip_y   = stalk_y - int(sw * 0.22)
@@ -2771,6 +3311,7 @@ def _draw_slot_overlay(surf, slot, pcx, pcy, sw, sh):
             grh = int(sh * (1.0 + ring * 0.18 * pg21))
             ga  = int(28 * pg21 * ring // 3)
             gs  = pygame.Surface((grw+4, grh+4), pygame.SRCALPHA)
+            gs.fill((0,0,0,0))
             pygame.draw.ellipse(gs, (255,198,28,ga), (2,2,grw,grh))
             surf.blit(gs, (pcx-grw//2-2, spy21-grh//2-2))
         # 금전닢 부유 애니메이션
@@ -3208,6 +3749,24 @@ def draw_jelly_detail(surf, slot, inventory):
 
 
 # ── 팝 버블 / 배경 버블 ───────────────────────────────────────
+class FloatText:
+    def __init__(self, x, y, text, color=(255,230,100)):
+        self.x = float(x); self.y = float(y)
+        self.text = text; self.color = color
+        self.timer = 70; self.max_t = 70
+        self.vy = -0.7
+
+    def update(self):
+        self.y += self.vy; self.timer -= 1
+        return self.timer > 0
+
+    def draw(self, surf):
+        a = 255 if self.timer > 15 else 0
+        f = get_font(11, bold=True); t = f.render(self.text, True, self.color)
+        t.set_alpha(a)
+        surf.blit(t, (int(self.x)-t.get_width()//2, int(self.y)))
+
+
 class PopBubble:
     def __init__(self, x, y):
         angle = random.uniform(-math.pi*0.9, -math.pi*0.1)
@@ -4176,6 +4735,7 @@ class Jellyfish:
             grh = int(bh * (1.0 + ring * 0.14 * pg))
             ga  = int(25 * pg * ring // 5)
             gs  = pygame.Surface((grw+4, grh+4), pygame.SRCALPHA)
+            gs.fill((0,0,0,0))
             pygame.draw.ellipse(gs, (*gc, ga), (2, 2, grw, grh))
             surf.blit(gs, (cx - grw//2 - 2, cy - grh//2 - 2))
 
@@ -4190,6 +4750,7 @@ class Jellyfish:
             grh = int(bh * (1.0 + (i+1) * 0.12 * pg))
             ga  = int(24 * pg * (5 - i) // 5)
             gs  = pygame.Surface((grw + 4, grh + 4), pygame.SRCALPHA)
+            gs.fill((0,0,0,0))
             pygame.draw.ellipse(gs, (*hue, ga), (2, 2, grw, grh))
             surf.blit(gs, (cx - grw//2 - 2, cy - grh//2 - 2))
 
@@ -4601,7 +5162,7 @@ def main():
     bubbles     = [Bubble() for _ in range(22)]
     pop_bubbles    = []
     cult_doc_drops = []
-    inventory, loaded_stage, cult_docs, saved_aquarium, saved_bred, saved_nickname, bgm_vol, sfx_vol, chat_vol = load_game()
+    inventory, loaded_stage, cult_docs, saved_aquarium, saved_bred, saved_nickname, bgm_vol, sfx_vol, chat_vol, saved_wardrobe, saved_equipped = load_game()
     pygame.mixer.music.set_volume(bgm_vol)
     for _s, _v_base in [(SND_KILL,0.7),(SND_FEED,0.8),(SND_BUBBLE,0.5),(SND_BELL,0.7),(SND_FANFARE,0.8),(SND_AQUARIUM,0.6)]:
         if _s: _s.set_volume(_v_base * sfx_vol)
@@ -4634,6 +5195,15 @@ def main():
     online_action        = None
     online_action_timer  = 0
     online_action_phase  = 0.0
+    online_npc_t         = 0.0
+    online_self_pushed   = None   # 로컬 플레이어 밀림 상태 {'timer','max_t','vx','vy'}
+    push_fetch_t         = 0
+    online_npc_cur_x     = float(OW//2+60)
+    online_npc_cur_y     = float(OH_PLAY//2-40)
+    online_selected      = None
+    online_pushed        = {}
+    online_push_anim_t   = 0
+    online_push_dir      = (1.0, 0.0)
     settings_dragging   = None   # 'bgm', 'sfx', 'chat'
     if show_nickname_input:
         pygame.key.start_text_input()
@@ -4658,6 +5228,21 @@ def main():
     aquarium           = saved_aquarium
     aquarium_fish_list = [AquariumFish(di) for di in saved_aquarium]
     food_pellets       = []
+    glass_bottles      = []
+    bottle_spawn_t     = random.randint(300, 540)
+    feed_bonus         = 0.0   # 먹이 줄 때마다 +0.05, 드랍 시 리셋
+    last_fed_fish      = None  # 마지막으로 먹이 준 해파리 객체
+    float_texts        = []
+    wardrobe_items     = set(saved_wardrobe)
+    equipped_item      = saved_equipped
+    _wardrobe_cache['items']    = wardrobe_items
+    _wardrobe_cache['equipped'] = equipped_item
+    wardrobe_context   = None   # right-clicked item_id
+    show_wardrobe      = False
+    item_msg           = ''
+    item_msg_timer     = 0
+    acquire_msg        = ''
+    acquire_msg_timer  = 0
     context      = None
     unlock_msg   = ''
     unlock_timer = 0
@@ -4669,6 +5254,7 @@ def main():
         '해파리를 잡다보면 미획득 해파리도 볼 수 있을거야',
         '해파리를 어항에 넣으면 춤추는 해파리를 볼 수 있을거야. 아마도...',
         '등급이 높은 해파리일수록 점수를 많이 모을 수 있어. 랭킹을 확인해 봐~',
+        '어항 속 해파리는 선물을 준다는 소문이 있어. 특수 해파리 전용 선물도 있다더라?',
     ]
     notice_x     = float(WIDTH)   # 현재 x 위치 (오른쪽에서 왼쪽으로)
     notice_idx   = 0
@@ -4760,6 +5346,7 @@ def main():
                     elif show_bag: show_bag = False
                     elif aquarium_context is not None: aquarium_context = None
                     elif aquarium_adding: aquarium_adding = False
+                    elif show_wardrobe:   show_wardrobe = False
                     elif show_aquarium:   show_aquarium = False
                     elif online_chat_active:         online_chat_active=False; pygame.key.stop_text_input()
                     elif show_online:
@@ -4838,6 +5425,40 @@ def main():
                                     online_interact_open=False; break
                             else:
                                 online_interact_open=False
+                        else:
+                            # 밀치기 버튼 클릭 확인
+                            _push_hit = False
+                            if online_selected and online_selected in _online_players and online_selected not in online_pushed:
+                                _sd = _online_players[online_selected]
+                                _px = int(_sd.get('cur_x',_sd.get('x',190)))
+                                _py = int(_sd.get('cur_y',_sd.get('y',200)))
+                                _sp_h2 = int(40*0.75)
+                                _bw,_bh = 60,24
+                                _bx2 = max(2, min(OW-_bw-2, _px-_bw//2))
+                                _by2 = max(2, _py-_sp_h2//2-36)
+                                _dist_p = math.hypot(_px-online_x, _py-online_y)
+                                if pygame.Rect(_bx2,_by2,_bw,_bh).collidepoint(mx,my) and _dist_p < 55:
+                                    _ddx = _px-online_x; _ddy = _py-online_y
+                                    _dlen = max(1.0, math.hypot(_ddx,_ddy))
+                                    _vx = (_ddx/_dlen)*9.0; _vy = (_ddy/_dlen)*4.0
+                                    _max_t = 70
+                                    online_pushed[online_selected] = {'timer':_max_t,'max_t':_max_t,'vx':_vx,'vy':_vy}
+                                    online_push_anim_t = 18
+                                    online_push_dir = (_ddx/_dlen, _ddy/_dlen)
+                                    # Firebase에 push 이벤트 전송 (NPC 제외)
+                                    if online_selected != '__npc__':
+                                        send_push_event(online_selected, _vx, _vy)
+                                    online_selected = None
+                                    _push_hit = True
+                            if not _push_hit:
+                                _found = None
+                                _sp2 = 40; _sh2 = int(_sp2*0.75)
+                                for _n2,_d2 in _online_players.items():
+                                    _px2 = int(_d2.get('cur_x',_d2.get('x',190)))
+                                    _py2 = int(_d2.get('cur_y',_d2.get('y',200)))
+                                    if abs(mx-_px2)<_sp2//2 and abs(my-_py2)<_sh2//2+10:
+                                        _found=_n2; break
+                                online_selected = _found
                         # 채팅창 클릭
                         inp_y=OH_PLAY+OH_CHAT-30
                         if pygame.Rect(8,inp_y,OW-16,24).collidepoint(mx,my):
@@ -4929,9 +5550,38 @@ def main():
                                     break
                                 pos_i5 += 1
                     elif show_aquarium:
-                        if aquarium_context is not None:
+                        if show_wardrobe:
+                            if AQ_BACK_RECT.collidepoint(mx, my):
+                                show_wardrobe = False; wardrobe_context = None
+                            elif wardrobe_context and wardrobe_context in wardrobe_items:
+                                # 팝업 착용/해제 버튼 클릭 확인
+                                ci_w = next((j for j,(iid,_) in enumerate(WARDROBE_ITEM_DEFS) if iid==wardrobe_context),0)
+                                cw_w,ch_w,cols_w,gap_w = 82,80,4,6
+                                total_w_w = cols_w*(cw_w+gap_w)-gap_w
+                                sx_w = (WIDTH-total_w_w)//2; sy_w = 58
+                                px_w = sx_w+(ci_w%cols_w)*(cw_w+gap_w)
+                                py_w = sy_w+(ci_w//cols_w)*(ch_w+gap_w)
+                                pop_x_w = min(px_w+cw_w+4, WIDTH-84); pop_y_w = max(py_w,4)
+                                if pygame.Rect(pop_x_w,pop_y_w,80,32).collidepoint(mx,my):
+                                    if equipped_item == wardrobe_context:
+                                        equipped_item = None
+                                    else:
+                                        equipped_item = wardrobe_context
+                                    _wardrobe_cache['equipped'] = equipped_item
+                                    save_game(inventory,_current_stage,cult_docs,aquarium,player_nickname,bgm_vol,sfx_vol,wardrobe_items=wardrobe_items,equipped_item=equipped_item)
+                                wardrobe_context = None
+                            else:
+                                wardrobe_context = None
+                        elif aquarium_context is not None:
                             if aquarium_context.get_feed_rect().collidepoint(mx,my):
                                 aquarium_context.fish.feed()
+                                feed_bonus = min(feed_bonus + 0.05, 0.95)
+                                last_fed_fish = aquarium_context.fish
+                                _fx = aquarium_context.fish.x + random.uniform(-15,15)
+                                _fy = aquarium_context.fish.y - aquarium_context.fish.bh0//2
+                                float_texts.append(FloatText(_fx, _fy, '친밀도 +5%', color=(255,80,140)))
+                                item_msg = random.choice(['해파리와 친해졌습니다!','해파리가 좋아합니다!','해파리가 선물을 준비합니다!'])
+                                item_msg_timer = 120
                                 if SND_FEED: SND_FEED.play()
                                 for _ in range(3):
                                     food_pellets.append(FoodPellet(
@@ -4944,27 +5594,42 @@ def main():
                                 di_r = f_rel.design_idx
                                 aquarium.remove(di_r)
                                 if SND_RELEASE: SND_RELEASE.play()
-                                # 방생: 바다로 보냄 — 발견 기록 유지(0으로 남김)
                                 if di_r not in inventory:
                                     inventory[di_r] = 0
-                                save_game(inventory,_current_stage,cult_docs,aquarium,player_nickname,bgm_vol,sfx_vol)
+                                save_game(inventory,_current_stage,cult_docs,aquarium,player_nickname,bgm_vol,sfx_vol,wardrobe_items=wardrobe_items)
                                 aquarium_context = None
                             else:
                                 aquarium_context = None
                         elif AQ_BACK_RECT.collidepoint(mx, my):
                             show_aquarium = False; aquarium_context = None
+                        elif AQ_WARDROBE_RECT.collidepoint(mx, my):
+                            show_wardrobe = True; play_ui_click()
                         elif AQUARIUM_ADD_BTN.collidepoint(mx, my) and len(aquarium)<5:
                             aquarium_adding = True
                         else:
-                            # 좌클릭: 꿀렁 + 버블
-                            for f_obj in aquarium_fish_list:
-                                if f_obj.hit_test(mx, my):
-                                    f_obj.click_squish = 1.0
-                                    opts_sq = [s for s in [SND_SQUEAK1,SND_SQUEAK2] if s]
-                                    if opts_sq: random.choice(opts_sq).play()
-                                    for _ in range(random.randint(3,5)):
-                                        pop_bubbles.append(PopBubble(f_obj.x, f_obj.y))
-                                    break
+                            # 유리병 클릭 확인
+                            _bottle_clicked = False
+                            for _b2 in glass_bottles:
+                                if _b2.hit_test(mx, my) and not _b2.collected:
+                                    _b2.collected = True
+                                    wardrobe_items.add(_b2.item_id)
+                                    acquire_msg = f'{_b2.item_name}을(를) 획득했습니다!'
+                                    acquire_msg_timer = 180
+                                    if SND_BELL: SND_BELL.play()
+                                    for _ in range(random.randint(5,8)):
+                                        pop_bubbles.append(PopBubble(_b2.x, _b2.y))
+                                    save_game(inventory,_current_stage,cult_docs,aquarium,player_nickname,bgm_vol,sfx_vol,wardrobe_items=wardrobe_items,equipped_item=equipped_item)
+                                    _bottle_clicked = True; break
+                            if not _bottle_clicked:
+                                # 좌클릭: 꿀렁 + 버블
+                                for f_obj in aquarium_fish_list:
+                                    if f_obj.hit_test(mx, my):
+                                        f_obj.click_squish = 1.0
+                                        opts_sq = [s for s in [SND_SQUEAK1,SND_SQUEAK2] if s]
+                                        if opts_sq: random.choice(opts_sq).play()
+                                        for _ in range(random.randint(3,5)):
+                                            pop_bubbles.append(PopBubble(f_obj.x, f_obj.y))
+                                        break
                     elif gacha_slot is not None:
                         # 확인 버튼 (progress > 0.84)
                         prog_g = 1.0 - gacha_timer / GACHA_TOTAL
@@ -5100,6 +5765,12 @@ def main():
                         show_online = True
                         online_x = float(OW//2); online_y = float(OH_PLAY//2)
                         online_keys = {'w':False,'a':False,'s':False,'d':False}
+                        online_npc_t = 0.0; online_selected = None; online_pushed = {}; online_push_anim_t = 0
+                        _online_players['__npc__'] = {
+                            'x': float(OW//2+60), 'y': float(OH_PLAY//2-40),
+                            'cur_x': float(OW//2+60), 'cur_y': float(OH_PLAY//2-40),
+                            'nickname': '테스트NPC', 'last_seen': 0
+                        }
                         start_sse_stream(player_nickname)
                         fetch_online_bg(player_nickname)
                         show_bag=False; show_scroll=False; show_aquarium=False
@@ -5117,7 +5788,18 @@ def main():
                                 break
 
                 elif event.button == 3:
-                    if show_aquarium and not aquarium_adding:
+                    if show_aquarium and show_wardrobe:
+                        # 옷장 아이템 우클릭
+                        cw_r,ch_r,cols_r,gap_r = 82,80,4,6
+                        total_w_r = cols_r*(cw_r+gap_r)-gap_r
+                        sx_r=(WIDTH-total_w_r)//2; sy_r=58
+                        wardrobe_context = None
+                        for j_r,(iid_r,_) in enumerate(WARDROBE_ITEM_DEFS):
+                            if iid_r not in wardrobe_items: continue
+                            ix_r=sx_r+(j_r%cols_r)*(cw_r+gap_r); iy_r=sy_r+(j_r//cols_r)*(ch_r+gap_r)
+                            if pygame.Rect(ix_r,iy_r,cw_r,ch_r).collidepoint(mx,my):
+                                wardrobe_context = iid_r; break
+                    elif show_aquarium and not aquarium_adding:
                         aquarium_context = None
                         for f_obj in reversed(aquarium_fish_list):
                             if f_obj.hit_test(mx, my):
@@ -5164,13 +5846,14 @@ def main():
             online_sync_t += 1
             if online_sync_t >= 10:
                 online_sync_t = 0
-                sync_online_pos(player_nickname, online_x, online_y)
+                sync_online_pos(player_nickname, online_x, online_y, online_action, online_action_phase, equipped_item)
             online_fetch_t += 1
             if online_fetch_t >= 90:  # 채팅만 주기적으로 fetch
                 online_fetch_t = 0
                 fetch_online_bg(player_nickname)
-            # 보간: cur_x/cur_y를 target x/y로 부드럽게 이동
-            for _od in _online_players.values():
+            # 보간: cur_x/cur_y를 target x/y로 부드럽게 이동 (밀치기 중인 플레이어 제외)
+            for _ok, _od in _online_players.items():
+                if _ok in online_pushed: continue
                 _od['cur_x'] = _od.get('cur_x', _od['x']) + (_od['x'] - _od.get('cur_x',_od['x'])) * 0.28
                 _od['cur_y'] = _od.get('cur_y', _od['y']) + (_od['y'] - _od.get('cur_y',_od['y'])) * 0.28
             is_mv = any(online_keys[k] for k in online_keys)
@@ -5180,11 +5863,64 @@ def main():
                 online_action_timer -= 1
                 online_action_phase += 0.15
                 if online_action_timer == 0: online_action = None
+            # 테스트 NPC 이동 (밀치기 중엔 멈춤) — SSE가 삭제해도 마지막 위치로 복원
+            if '__npc__' not in _online_players:
+                _online_players['__npc__'] = {
+                    'x': online_npc_cur_x, 'y': online_npc_cur_y,
+                    'cur_x': online_npc_cur_x, 'cur_y': online_npc_cur_y,
+                    'nickname': '테스트NPC', 'last_seen': 0
+                }
+            _npc = _online_players['__npc__']
+            if '__npc__' not in online_pushed:
+                online_npc_t += 0.018
+                _npc['x'] = OW//2 + 60 + math.sin(online_npc_t)*50
+                _npc['y'] = OH_PLAY//2 - 40 + math.cos(online_npc_t*0.7)*30
+                _npc['cur_x'] = _npc['x']; _npc['cur_y'] = _npc['y']
+            _npc['phase'] = online_npc_t * 3.0
+            online_npc_cur_x = float(_npc.get('cur_x', online_npc_cur_x))
+            online_npc_cur_y = float(_npc.get('cur_y', online_npc_cur_y))
+            # 밀치기 타이머 감소 + 피격자 위치 이동
+            new_pushed = {}
+            for _pk,_pv in online_pushed.items():
+                t2 = _pv['timer'] - 1
+                if t2 > 0:
+                    new_vx = _pv['vx'] * 0.82; new_vy = _pv['vy'] * 0.82
+                    new_pushed[_pk] = {'timer':t2,'max_t':_pv['max_t'],'vx':new_vx,'vy':new_vy}
+                    if _pk in _online_players:
+                        _op2 = _online_players[_pk]
+                        _op2['cur_x'] = max(20, min(OW-20, _op2.get('cur_x',_op2['x']) + _pv['vx']))
+                        _op2['cur_y'] = max(20, min(OH_PLAY-20, _op2.get('cur_y',_op2['y']) + _pv['vy']))
+            online_pushed = new_pushed
+            if online_push_anim_t > 0: online_push_anim_t -= 1
+            # push_events fetch (1.5초마다)
+            push_fetch_t += 1
+            if push_fetch_t >= 90:
+                push_fetch_t = 0
+                fetch_push_events()
+            # push_events 적용
+            for _pn, _pe in list(_push_events.items()):
+                _pmax = 70
+                if _pn == player_nickname:
+                    # 내가 밀렸을 때
+                    if online_self_pushed is None:
+                        online_self_pushed = {'timer':_pmax,'max_t':_pmax,'vx':_pe['vx'],'vy':_pe['vy']}
+                elif _pn in _online_players and _pn not in online_pushed:
+                    online_pushed[_pn] = {'timer':_pmax,'max_t':_pmax,'vx':_pe['vx'],'vy':_pe['vy']}
+            # 로컬 플레이어 밀림 업데이트
+            if online_self_pushed:
+                online_self_pushed['timer'] -= 1
+                online_x = max(20, min(OW-20, online_x + online_self_pushed['vx']))
+                online_y = max(20, min(OH_PLAY-20, online_y + online_self_pushed['vy']))
+                online_self_pushed['vx'] *= 0.82; online_self_pushed['vy'] *= 0.82
+                if online_self_pushed['timer'] <= 0: online_self_pushed = None
             draw_online_world(screen, online_x, online_y, player_nickname,
                               _online_players, _online_chat,
                               online_chat_input, online_chat_active, online_chat_ime,
                               online_move_phase, online_local_chat, online_local_chat_t,
-                              online_interact_open, online_action, online_action_phase)
+                              online_interact_open, online_action, online_action_phase,
+                              online_selected, online_pushed,
+                              online_push_anim_t, online_push_dir,
+                              equipped_item, online_self_pushed)
         if show_settings:
             draw_settings_screen(screen, bgm_vol, sfx_vol, chat_vol)
         if show_ranking:
@@ -5202,11 +5938,39 @@ def main():
         if show_aquarium:
             if aquarium_adding:
                 draw_aquarium_add_screen(screen, inventory, aq_add_scroll)
+            elif show_wardrobe:
+                draw_wardrobe_screen(screen, wardrobe_items, equipped_item, wardrobe_context)
             else:
                 draw_aquarium_screen(screen, aquarium_fish_list)
+                # 유리병 스폰
+                if aquarium_fish_list:
+                    bottle_spawn_t -= 1
+                    if bottle_spawn_t <= 0:
+                        bottle_spawn_t = random.randint(320, 600)
+                        if len(glass_bottles) < 3:
+                            # 마지막으로 먹이 준 해파리 우선, 없으면 랜덤
+                            fish_src = (last_fed_fish if last_fed_fish and last_fed_fish in aquarium_fish_list
+                                        else random.choice(aquarium_fish_list))
+                            _specific = [d for d in WARDROBE_DROP_MAP.get(fish_src.design_idx, []) if d not in wardrobe_items]
+                            _common   = [d for d in WARDROBE_COMMON_DROPS if d not in wardrobe_items]
+                            # 전용템 40%+보너스, 공용템 15%+보너스
+                            _candidates = []
+                            if _specific and random.random() < min(0.50+feed_bonus, 0.95): _candidates += _specific
+                            if _common   and random.random() < min(0.20+feed_bonus, 0.95): _candidates += _common
+                            if _candidates:
+                                _drop_id = random.choice(_candidates)
+                                _drop_item = next(x for x in WARDROBE_ITEM_DEFS if x[0]==_drop_id)
+                                glass_bottles.append(GlassBottle(fish_src.x, fish_src.y, _drop_item))
+                                feed_bonus = 0.0  # 드랍 발생 시 리셋
+                                last_fed_fish = None
+                # 유리병 업데이트/렌더
+                glass_bottles = [b2 for b2 in glass_bottles if b2.update()]
+                for b2 in glass_bottles: b2.draw(screen)
                 # 사료 업데이트/렌더
                 food_pellets = [fp for fp in food_pellets if fp.update()]
                 for fp in food_pellets: fp.draw(screen)
+                float_texts = [ft for ft in float_texts if ft.update()]
+                for ft in float_texts: ft.draw(screen)
                 # 컨텍스트 메뉴
                 if aquarium_context:
                     aquarium_context.draw(screen)
@@ -5229,6 +5993,20 @@ def main():
         if unlock_timer > 0:
             draw_unlock_msg(screen, unlock_msg, unlock_timer)
             unlock_timer -= 1
+        if item_msg_timer > 0:
+            _a2 = 255 if item_msg_timer > 15 else 0
+            _fi = get_font(11, bold=True)
+            _ti = _fi.render(item_msg, True, (255, 235, 100))
+            _ti.set_alpha(_a2)
+            screen.blit(_ti, ((AQ_L+AQ_R)//2 - _ti.get_width()//2, AQ_T+8))
+            item_msg_timer -= 1
+        if acquire_msg_timer > 0:
+            _a3 = 255 if acquire_msg_timer > 20 else 0
+            _fa = get_font(15, bold=True)
+            _ta = _fa.render(acquire_msg, True, (255, 235, 100))
+            _ta.set_alpha(_a3)
+            screen.blit(_ta, (WIDTH//2 - _ta.get_width()//2, AQ_B - 52))
+            acquire_msg_timer -= 1
         if doc_timer > 0:
             draw_unlock_msg(screen, doc_msg, doc_timer,
                             by_override=HEIGHT - 132,
