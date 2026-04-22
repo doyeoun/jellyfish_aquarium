@@ -8,7 +8,7 @@ import threading
 import urllib.request as _url_req
 import webbrowser
 
-VERSION = '3.2.1'
+VERSION = '3.2.2'
 _latest_ver  = None   # None=확인중, ''=최신, 버전문자열=업데이트있음
 _release_url = ''
 
@@ -20,7 +20,7 @@ def _fetch_update():
             headers={'User-Agent': 'jellyfish-game'})
         with _url_req.urlopen(req, timeout=5) as r:
             data = json.loads(r.read())
-        tag = data.get('tag_name', '').lstrip('v')
+        tag = data.get('tag_name', '').lstrip('v').lstrip('.')
         _release_url = data.get('html_url', '')
         _latest_ver  = tag if tag and tag != VERSION else ''
     except Exception:
@@ -5560,7 +5560,7 @@ def main():
                             show_ranking = False
                     elif aquarium_adding:
                         aq_drag_y = my
-                    if show_dev_add:
+                    if not show_online and show_dev_add:
                         if DEV_RESET_BACK.collidepoint(mx, my):
                             show_dev_add = False
                         else:
@@ -5830,7 +5830,7 @@ def main():
                         show_aquarium = True
                         if SND_AQUARIUM: SND_AQUARIUM.play()
                         show_bag = False; show_scroll = False; context = None
-                    elif RANKING_RECT.collidepoint(mx, my):
+                    elif RANKING_RECT.collidepoint(mx, my) and not show_online:
                         play_ui_click()
                         show_ranking = True; show_ranking_back = pygame.Rect(15,12,75,28)
                         fetch_rankings_bg()
