@@ -10,10 +10,12 @@ import webbrowser
 
 VERSION = '3.2.3'
 _latest_ver  = None   # None=확인중, ''=최신, 버전문자열=업데이트있음
-_release_url = ''
+_release_url  = ''
+_download_url = ''   # exe 직접 다운로드 URL
+_update_state = ''   # '', 'downloading', 'done', 'error'
 
 def _fetch_update():
-    global _latest_ver, _release_url
+    global _latest_ver, _release_url, _download_url
     try:
         req = _url_req.Request(
             'https://api.github.com/repos/doyeoun/jellyfish_aquarium/releases/latest',
@@ -23,8 +25,37 @@ def _fetch_update():
         tag = data.get('tag_name', '').lstrip('v').lstrip('.')
         _release_url = data.get('html_url', '')
         _latest_ver  = tag if tag and tag != VERSION else ''
+        for asset in data.get('assets', []):
+            if asset.get('name','').endswith('.exe'):
+                _download_url = asset.get('browser_download_url',''); break
     except Exception:
         _latest_ver = ''
+
+def auto_update():
+    """새 exe 다운로드 → bat 스크립트로 교체 후 재시작."""
+    global _update_state
+    if not _download_url or not getattr(sys,'frozen',False): return
+    _update_state = 'downloading'
+    def _do():
+        global _update_state
+        try:
+            import urllib.request as _ur, subprocess as _sp
+            cur = sys.executable
+            new = cur.replace('.exe','_new.exe')
+            _ur.urlretrieve(_download_url, new)
+            bat = cur.replace('.exe','_update.bat')
+            with open(bat,'w',encoding='utf-8') as f:
+                f.write('@echo off\r\n')
+                f.write('timeout /t 2 /nobreak > nul\r\n')
+                f.write(f'del "{cur}"\r\n')
+                f.write(f'move /y "{new}" "{cur}"\r\n')
+                f.write(f'start "" "{cur}"\r\n')
+                f.write('del "%~f0"\r\n')
+            _sp.Popen([bat], shell=True, creationflags=0x08000000)
+            _update_state = 'done'
+        except:
+            _update_state = 'error'
+    threading.Thread(target=_do, daemon=True).start()
 
 threading.Thread(target=_fetch_update, daemon=True).start()
 
@@ -119,6 +150,59 @@ def upload_score_bg(nickname, score):
 _online_players = {}   # nick → {x,y,nickname,last_seen}
 _online_chat    = []   # [{nick,text,time}]
 _push_events    = {}   # nick → {vx,vy,t} 최신 push 이벤트
+_call_events    = {}   # nick → {caller,t} 최신 호출 이벤트
+
+_SND_CALL_NOTIF = None
+
+def _get_call_notif_snd():
+    global _SND_CALL_NOTIF
+    if _SND_CALL_NOTIF is None:
+        try:
+            import pygame as _pgc
+            _path = __import__('os').path.join(SOUNDS_DIR, 'master_of_dreams_bells_1_102.mp3')
+            if __import__('os').path.exists(_path):
+                _SND_CALL_NOTIF = _pgc.mixer.Sound(_path)
+        except: pass
+    return _SND_CALL_NOTIF
+
+def flash_taskbar_window():
+    try:
+        import ctypes, pygame as _pg2
+        hwnd = _pg2.display.get_wm_info().get('window', 0)
+        if not hwnd: return
+        class _FWINFO(ctypes.Structure):
+            _fields_=[('cbSize',ctypes.c_uint),('hwnd',ctypes.c_void_p),
+                      ('dwFlags',ctypes.c_uint),('uCount',ctypes.c_uint),('dwTimeout',ctypes.c_uint)]
+        fi=_FWINFO(cbSize=ctypes.sizeof(_FWINFO),hwnd=hwnd,dwFlags=3|12,uCount=10,dwTimeout=400)
+        ctypes.windll.user32.FlashWindowEx(ctypes.byref(fi))
+    except: pass
+
+def send_call_event(target_nick, caller_nick):
+    def _c():
+        try:
+            import urllib.parse as _up3, time as _tm
+            safe=_up3.quote(target_nick,safe='')
+            url=FIREBASE_URL+f'call_events/{safe}.json'
+            payload={'caller':caller_nick,'t':int(_tm.time())}
+            if _fb_session: _fb_session.put(url,json=payload,timeout=3)
+            else:
+                import urllib.request as _ur,json as _j
+                _ur.urlopen(_ur.Request(url,_j.dumps(payload).encode(),'PUT',
+                            headers={'Content-Type':'application/json','User-Agent':'jellyfish-game'}),timeout=3)
+        except: pass
+    import threading as _t; _t.Thread(target=_c,daemon=True).start()
+
+def fetch_call_events():
+    def _fc():
+        global _call_events
+        try:
+            import urllib.request as _ur,json as _j,time as _tm
+            req=_ur.Request(FIREBASE_URL+'call_events.json',headers={'User-Agent':'jellyfish-game'})
+            with _ur.urlopen(req,timeout=3) as r: data=_j.loads(r.read()) or {}
+            now=int(_tm.time())
+            _call_events={k:v for k,v in data.items() if now-v.get('t',0)<10}
+        except: pass
+    import threading as _t; _t.Thread(target=_fc,daemon=True).start()
 
 # Firebase 전용 requests 세션 (TCP 연결 재사용 → 쓰기 지연 절감)
 try:
@@ -2393,7 +2477,7 @@ def _draw_status_bubble(surf, cx, top_y, text):
     surf.blit(tw,(bx2+pad, by2+pad//2))
 
 
-def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_active, chat_ime, move_phase=0.0, local_chat='', local_chat_t=0, interact_open=False, action=None, action_phase=0.0, selected=None, pushed=None, push_anim_t=0, push_dir=(1,0), equipped_item=None, self_pushed=None, status_msg='', show_status_input=False, status_input_text='', status_input_ime=''):
+def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_active, chat_ime, move_phase=0.0, local_chat='', local_chat_t=0, interact_open=False, action=None, action_phase=0.0, selected=None, pushed=None, push_anim_t=0, push_dir=(1,0), equipped_item=None, self_pushed=None, status_msg='', show_status_input=False, status_input_text='', status_input_ime='', call_selected=None):
     global _online_bg
     if _online_bg is None: _online_bg = make_online_bg()
     surf.blit(_online_bg,(0,0))
@@ -2420,10 +2504,11 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
         else:
             surf.blit(spr2,(px2-sp_sz//2,py2-sp_h//2))
             _draw_online_tentacles(surf,px2,py2,sp_sz,sp_h,t_phase,False)
+        _p_nick_extra={'hat':12,'deep_orb':16,'rabbit_ears':8,'frog_hat_item':8,'cherry_top':10,'angel_halo':10}.get(data.get('equipped','') or '',0)
         fn2=get_font(10,bold=True); nt2=fn2.render(data.get('nickname',nick),True,(255,255,255))
-        surf.blit(nt2,(px2-nt2.get_width()//2,py2-sp_h//2-14))
+        surf.blit(nt2,(px2-nt2.get_width()//2,py2-sp_h//2-14-_p_nick_extra))
         _p_status = data.get('status_msg','')
-        _p_bubble_y = py2-sp_h//2-14
+        _p_bubble_y = py2-sp_h//2-14-_p_nick_extra
         chat_t = _nick_chat(nick)
         if chat_t:
             _draw_online_chat_bubble(surf,px2,_p_bubble_y,chat_t)
@@ -2451,6 +2536,13 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
         _p_action = data.get('action','')
         if _p_action and nick not in pushed:
             _draw_online_action(surf,px2,py2,sp_sz,sp_h,_p_action,data.get('action_phase',0.0))
+        # 호출 버튼 (우클릭 시)
+        if call_selected == nick:
+            _cr=18; _cbx=max(_cr,min(OW-_cr,px2)); _cby=max(_cr,py2-sp_h//2-58)
+            pygame.draw.circle(surf,(200,55,20),(_cbx,_cby),_cr)
+            pygame.draw.circle(surf,(255,110,60),(_cbx,_cby),_cr,2)
+            fcb=get_font(12,bold=True); tcb=fcb.render('호출',True,(255,235,210))
+            surf.blit(tcb,(_cbx-tcb.get_width()//2,_cby-tcb.get_height()//2))
         # 밀치기 버튼: 근접 시에만 표시 (55px 이내)
         dist_to_local = math.hypot(px2-lx, py2-ly)
         if selected == nick and nick not in pushed and dist_to_local < 55:
@@ -5345,7 +5437,14 @@ def main():
     online_status_msg    = ''
     show_status_input    = False
     status_input         = ''
-    status_ime           = ''   # 로컬 플레이어 밀림 상태 {'timer','max_t','vx','vy'}
+    status_ime           = ''
+    call_selected        = None   # 우클릭된 플레이어 닉
+    call_fetch_t         = 0
+    applied_call_t       = {}     # nick → 마지막 처리한 call t
+    call_notif           = ''
+    call_notif_timer     = 0
+    pending_call_notif   = ''   # 창 포커스 시 표시 대기 중인 호출 메시지
+    online_fx_particles  = []   # [x,y,vx,vy,life] 호출 이펙트 파티클   # 로컬 플레이어 밀림 상태 {'timer','max_t','vx','vy'}
     push_fetch_t         = 0
     _applied_push_t      = {}     # nick → 마지막 처리한 push 이벤트 timestamp
     online_npc_cur_x     = float(OW//2+60)
@@ -5405,6 +5504,7 @@ def main():
         '해파리를 어항에 넣으면 춤추는 해파리를 볼 수 있을거야. 아마도...',
         '등급이 높은 해파리일수록 점수를 많이 모을 수 있어. 랭킹을 확인해 봐~',
         '어항 속 해파리는 선물을 준다는 소문이 있어. 특수 해파리 전용 선물도 있다더라?',
+        '다른 유저 해파리를 호출할 수 있어! 호출!',
     ]
     notice_x     = float(WIDTH)   # 현재 x 위치 (오른쪽에서 왼쪽으로)
     notice_idx   = 0
@@ -5417,6 +5517,9 @@ def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 show_quit_confirm = True
+            elif event.type == pygame.ACTIVEEVENT and getattr(event,'gain',0)==1:
+                if pending_call_notif:
+                    call_notif=pending_call_notif; call_notif_timer=240; pending_call_notif=''
             if show_quit_confirm and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if QUIT_OK_RECT.collidepoint(event.pos):
                     save_game(inventory,_current_stage,cult_docs,aquarium,player_nickname)
@@ -5605,6 +5708,22 @@ def main():
                             else:
                                 online_interact_open=False
                         else:
+                            # 호출 버튼 클릭 확인
+                            if call_selected and call_selected in _online_players:
+                                _csd=_online_players[call_selected]
+                                _cpx=int(_csd.get('cur_x',_csd.get('x',190)))
+                                _cpy=int(_csd.get('cur_y',_csd.get('y',200)))
+                                _sp_hc=int(40*0.75); _cr2=16
+                                _cbx=max(_cr2,min(OW-_cr2,_cpx)); _cby=max(_cr2,_cpy-_sp_hc//2-58)
+                                if math.hypot(mx-_cbx,my-_cby)<_cr2:
+                                    send_call_event(call_selected, player_nickname)
+                                    for _ in range(12):
+                                        _a=random.uniform(0,math.pi*2); _sp=random.uniform(1.8,4.0)
+                                        online_fx_particles.append([float(_cbx),float(_cby),math.cos(_a)*_sp,math.sin(_a)*_sp,1.0])
+                                    if SND_BELL: SND_BELL.play()
+                                    call_selected=None
+                                else:
+                                    call_selected=None
                             # 밀치기 버튼 클릭 확인
                             _push_hit = False
                             if online_selected and online_selected in _online_players and online_selected not in online_pushed:
@@ -5704,7 +5823,13 @@ def main():
                                     break
                                 pos_r += 1
                     elif _latest_ver and pygame.Rect(0,0,WIDTH,22).collidepoint(mx,my):
-                        webbrowser.open(_release_url)
+                        if _update_state == '':
+                            if _download_url and getattr(sys,'frozen',False):
+                                auto_update()
+                            else:
+                                webbrowser.open(_release_url)
+                        elif _update_state == 'done':
+                            running = False  # 재시작 대기 중이면 종료
                     elif aquarium_adding:
                         if AQ_BACK_RECT.collidepoint(mx, my):
                             aquarium_adding = False
@@ -5971,7 +6096,17 @@ def main():
                                 break
 
                 elif event.button == 3:
-                    if show_aquarium and show_wardrobe:
+                    if show_online:
+                        # 온라인방 우클릭: 플레이어 선택 → 호출 버튼
+                        _sp2r=40; _sh2r=int(_sp2r*0.75)
+                        _found_c=None
+                        for _n2r,_d2r in _online_players.items():
+                            _px2r=int(_d2r.get('cur_x',_d2r.get('x',190)))
+                            _py2r=int(_d2r.get('cur_y',_d2r.get('y',200)))
+                            if abs(mx-_px2r)<_sp2r//2 and abs(my-_py2r)<_sh2r//2+10:
+                                _found_c=_n2r; break
+                        call_selected = _found_c if _found_c and _found_c != '__npc__' else None
+                    elif show_aquarium and show_wardrobe:
                         # 옷장 아이템 우클릭
                         cw_r,ch_r,cols_r,gap_r = 82,80,4,6
                         total_w_r = cols_r*(cw_r+gap_r)-gap_r
@@ -6079,11 +6214,26 @@ def main():
                         _op2['cur_y'] = max(20, min(OH_PLAY-20, _op2.get('cur_y',_op2['y']) + _pv['vy']))
             online_pushed = new_pushed
             if online_push_anim_t > 0: online_push_anim_t -= 1
-            # push_events fetch (1.5초마다)
+            # push/call events fetch (0.5초마다)
             push_fetch_t += 1
             if push_fetch_t >= 30:
                 push_fetch_t = 0
                 fetch_push_events()
+                fetch_call_events()
+            # call_events 처리
+            for _cn,_ce in list(_call_events.items()):
+                _cevt=_ce.get('t',0)
+                if _cn==player_nickname and applied_call_t.get(_cn,0)<_cevt:
+                    applied_call_t[_cn]=_cevt
+                    _caller_msg=f"{_ce.get('caller','?')}님이 호출했습니다!"
+                    flash_taskbar_window()
+                    _csnd=_get_call_notif_snd()
+                    if _csnd: _csnd.play()
+                    import pygame as _pg3
+                    if _pg3.display.get_active():
+                        call_notif=_caller_msg; call_notif_timer=240
+                    else:
+                        pending_call_notif=_caller_msg
             # push_events 적용
             import time as _pt2
             for _pn, _pe in list(_push_events.items()):
@@ -6121,7 +6271,19 @@ def main():
                               online_selected, online_pushed,
                               online_push_anim_t, online_push_dir,
                               equipped_item, online_self_pushed,
-                              online_status_msg, show_status_input, status_input, status_ime)
+                              online_status_msg, show_status_input, status_input, status_ime,
+                              call_selected)
+            # 호출 이펙트 파티클 (온라인 월드 위에)
+            new_fx=[]
+            for _fp in online_fx_particles:
+                _fp[0]+=_fp[2]; _fp[1]+=_fp[3]; _fp[2]*=0.88; _fp[3]*=0.88; _fp[4]-=0.055
+                if _fp[4]>0:
+                    _fr=max(2,int(_fp[4]*8))
+                    _fs=pygame.Surface((_fr*2+2,_fr*2+2),pygame.SRCALPHA)
+                    pygame.draw.circle(_fs,(220,70,20,int(_fp[4]*220)),(_fr+1,_fr+1),_fr)
+                    screen.blit(_fs,(int(_fp[0])-_fr-1,int(_fp[1])-_fr-1))
+                    new_fx.append(_fp)
+            online_fx_particles=new_fx
         if show_settings:
             draw_settings_screen(screen, bgm_vol, sfx_vol, chat_vol)
         if show_ranking:
@@ -6219,13 +6381,21 @@ def main():
 
         # ── 슬라이딩 공지 ─────────────────────────────────────────
         if _latest_ver:
-            # 업데이트 알림 배너 (스크롤 공지 대신 표시)
             ub = pygame.Surface((WIDTH, 22), pygame.SRCALPHA)
-            ub.fill((255, 148, 0, 230))
+            if _update_state == 'downloading': ub.fill((60,120,220,230))
+            elif _update_state == 'done':      ub.fill((30,160,60,230))
+            elif _update_state == 'error':     ub.fill((180,40,40,230))
+            else:                              ub.fill((255,148,0,230))
             screen.blit(ub, (0, 0))
             fu2 = get_font(11, bold=True)
-            ut2 = fu2.render(f'새 버전 {_latest_ver} 출시! 클릭해서 다운로드', True, (25, 12, 0))
+            if _update_state == 'downloading': _umsg = '다운로드 중... 잠시 기다려줘!'
+            elif _update_state == 'done':      _umsg = '다운로드 완료! 게임이 자동으로 재시작돼요.'
+            elif _update_state == 'error':     _umsg = f'다운로드 실패. 클릭해서 수동 다운로드'
+            else:                              _umsg = f'새 버전 {_latest_ver} 출시! 클릭하면 자동 업데이트'
+            ut2 = fu2.render(_umsg, True, (25,12,0) if _update_state=='' else (255,255,255))
             screen.blit(ut2, (WIDTH//2 - ut2.get_width()//2, 4))
+            if _update_state == 'done':
+                running = False
         elif notice_wait > 0:
             notice_wait -= 1
         else:
@@ -6244,6 +6414,19 @@ def main():
                 nt_s = fn_n.render(msg_n, True, (175, 218, 255))
                 screen.blit(nt_s, (int(notice_x), 2))
 
+        if call_notif_timer > 0:
+            _cna = 255 if call_notif_timer > 20 else 0
+            _cnf = get_font(13,bold=True); _cnt = _cnf.render(call_notif,True,(255,160,160))
+            _cpw = _cnt.get_width()+24; _cph = _cnt.get_height()+14
+            _cpx = WIDTH//2-_cpw//2; _cpy = HEIGHT//2-70
+            _cps = pygame.Surface((_cpw,_cph),pygame.SRCALPHA)
+            _cps.fill((60,10,10,int(_cna*0.88)))
+            pygame.draw.rect(_cps,(200,60,60,_cna),(0,0,_cpw,_cph),2,border_radius=8)
+            _cps.set_alpha(_cna)
+            screen.blit(_cps,(_cpx,_cpy))
+            _cnt.set_alpha(_cna)
+            screen.blit(_cnt,(WIDTH//2-_cnt.get_width()//2, _cpy+7))
+            call_notif_timer-=1
         if show_quit_confirm:
             draw_quit_confirm(screen)
         pygame.display.flip()
