@@ -8,7 +8,7 @@ import threading
 import urllib.request as _url_req
 import webbrowser
 
-VERSION = '3.2.3'
+VERSION = '3.3.0'
 _latest_ver  = None   # None=확인중, ''=최신, 버전문자열=업데이트있음
 _release_url  = ''
 _download_url = ''   # exe 직접 다운로드 URL
