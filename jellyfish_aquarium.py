@@ -8,7 +8,7 @@ import threading
 import urllib.request as _url_req
 import webbrowser
 
-VERSION = '3.2.2'
+VERSION = '3.2.3'
 _latest_ver  = None   # None=확인중, ''=최신, 버전문자열=업데이트있음
 _release_url = ''
 
@@ -128,7 +128,7 @@ try:
 except Exception:
     _fb_session = None
 
-def sync_online_pos(nick, x, y, action=None, action_phase=0.0, equipped_item=None, push_anim_t=0, push_dir=(0,0)):
+def sync_online_pos(nick, x, y, action=None, action_phase=0.0, equipped_item=None, push_anim_t=0, push_dir=(0,0), status_msg=''):
     def _s():
         try:
             import urllib.parse as _up2, time as _tm
@@ -138,6 +138,7 @@ def sync_online_pos(nick, x, y, action=None, action_phase=0.0, equipped_item=Non
             if action: payload['action'] = action; payload['action_phase'] = round(action_phase, 2)
             else:      payload['action'] = ''; payload['action_phase'] = 0.0
             payload['equipped']   = equipped_item or ''
+            payload['status_msg'] = status_msg or ''
             payload['push_start'] = round(_tm.time() - (18-push_anim_t)/60.0, 3) if push_anim_t > 0 else 0
             payload['push_dir_x'] = round(push_dir[0], 2)
             payload['push_dir_y'] = round(push_dir[1], 2)
@@ -2375,7 +2376,24 @@ def _draw_online_chat_bubble(surf, cx, top_y, text):
     surf.blit(tw,(bx2+pad, by2+pad//2))
 
 
-def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_active, chat_ime, move_phase=0.0, local_chat='', local_chat_t=0, interact_open=False, action=None, action_phase=0.0, selected=None, pushed=None, push_anim_t=0, push_dir=(1,0), equipped_item=None, self_pushed=None):
+def _draw_status_bubble(surf, cx, top_y, text):
+    fc = get_font(10, bold=True)
+    tw = fc.render(text, True, (240,250,255))
+    pad = 6
+    bw2 = min(tw.get_width()+pad*2, 160)
+    bh2 = tw.get_height()+pad
+    bx2 = max(2, min(OW-bw2-2, cx-bw2//2))
+    by2 = top_y - bh2 - 8
+    bs = pygame.Surface((bw2, bh2+6), pygame.SRCALPHA)
+    pygame.draw.rect(bs,(40,100,220,220),(0,0,bw2,bh2),border_radius=7)
+    pygame.draw.rect(bs,(100,170,255,200),(0,0,bw2,bh2),1,border_radius=7)
+    tip = min(max(bw2//2,8),bw2-8)
+    pygame.draw.polygon(bs,(40,100,220,220),[(tip-4,bh2),(tip+4,bh2),(tip,bh2+6)])
+    surf.blit(bs,(bx2,by2))
+    surf.blit(tw,(bx2+pad, by2+pad//2))
+
+
+def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_active, chat_ime, move_phase=0.0, local_chat='', local_chat_t=0, interact_open=False, action=None, action_phase=0.0, selected=None, pushed=None, push_anim_t=0, push_dir=(1,0), equipped_item=None, self_pushed=None, status_msg='', show_status_input=False, status_input_text='', status_input_ime=''):
     global _online_bg
     if _online_bg is None: _online_bg = make_online_bg()
     surf.blit(_online_bg,(0,0))
@@ -2404,8 +2422,14 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
             _draw_online_tentacles(surf,px2,py2,sp_sz,sp_h,t_phase,False)
         fn2=get_font(10,bold=True); nt2=fn2.render(data.get('nickname',nick),True,(255,255,255))
         surf.blit(nt2,(px2-nt2.get_width()//2,py2-sp_h//2-14))
+        _p_status = data.get('status_msg','')
+        _p_bubble_y = py2-sp_h//2-14
         chat_t = _nick_chat(nick)
-        if chat_t: _draw_online_chat_bubble(surf,px2,py2-sp_h//2-14,chat_t)
+        if chat_t:
+            _draw_online_chat_bubble(surf,px2,_p_bubble_y,chat_t)
+            _p_bubble_y -= (get_font(10,bold=True).size(chat_t)[1]+20)
+        if _p_status:
+            _draw_status_bubble(surf,px2,_p_bubble_y,_p_status)
         # 다른 플레이어 착용 아이템
         _p_equip = data.get('equipped','')
         if _p_equip and nick not in pushed:
@@ -2455,8 +2479,13 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
     _nick_y = int(ly)-sp_h//2-14-_nick_extra
     surf.blit(nt_l,(int(lx)-nt_l.get_width()//2, _nick_y))
     draw_player_item(surf, int(lx), int(ly), sp_sz, sp_h, equipped_item)
+    # 채팅 먼저 닉네임 위에, 상태는 채팅 위에
+    _bubble_y = _nick_y
     if local_chat and now2-local_chat_t<10:
-        _draw_online_chat_bubble(surf,int(lx),_nick_y,local_chat)
+        _draw_online_chat_bubble(surf,int(lx),_bubble_y,local_chat)
+        _bubble_y -= (get_font(10,bold=True).size(local_chat)[1] + 20)
+    if status_msg:
+        _draw_status_bubble(surf, int(lx), _bubble_y, status_msg)
     # 밀치기 팔 애니메이션
     if push_anim_t > 0:
         _max_t = 18
@@ -2504,6 +2533,22 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
     draw_online_jelly_icon(surf,wx_icon,wy_icon,interact_open)
     if interact_open:
         draw_online_interact_list(surf,wx_icon,wy_icon,action)
+    # 말풍선(상태메세지) 아이콘
+    sb_x=OW-44; sb_y=OH_PLAY-20
+    sb_active = bool(status_msg)
+    sb_col=(100,180,255) if sb_active else (70,130,190)
+    pygame.draw.rect(surf,sb_col,(sb_x-9,sb_y-8,18,13),border_radius=3)
+    pygame.draw.circle(surf,sb_col,(sb_x-2,sb_y+4),3)
+    pygame.draw.rect(surf,(30,70,140),(sb_x-9,sb_y-8,18,13),1,border_radius=3)
+    # 상태 입력창
+    if show_status_input:
+        si_w=OW-16; si_y=OH_PLAY-54
+        si_bg=pygame.Surface((si_w,24),pygame.SRCALPHA)
+        si_bg.fill((15,40,100,220))
+        pygame.draw.rect(si_bg,(80,150,255),(0,0,si_w,24),1,border_radius=5)
+        surf.blit(si_bg,(8,si_y))
+        fsi=get_font(11); tsi=fsi.render((status_input_text+status_input_ime)[:38] or '상태메세지 입력...',True,(200,230,255) if (status_input_text or status_input_ime) else (80,120,180))
+        surf.blit(tsi,(12,si_y+4))
     # 나가기
     bk=pygame.Surface((52,22),pygame.SRCALPHA)
     bk.fill((25,55,40,210))
@@ -2851,6 +2896,34 @@ def draw_ranking_screen(surf, rankings, loading, nickname=''):
         sc_s = f"{r.get('score',0):,}점"
         ts = fs.render(sc_s, True, (255,235,100))
         surf.blit(ts, (WIDTH-28-ts.get_width(), y_r+10))
+
+
+QUIT_OK_RECT     = pygame.Rect(WIDTH//2-60, HEIGHT//2+20, 52, 28)
+QUIT_CANCEL_RECT = pygame.Rect(WIDTH//2+8,  HEIGHT//2+20, 52, 28)
+
+def draw_quit_confirm(surf):
+    overlay = pygame.Surface((WIDTH,HEIGHT),pygame.SRCALPHA)
+    overlay.fill((0,0,0,200))
+    surf.blit(overlay,(0,0))
+    bx,by,bw,bh = WIDTH//2-90, HEIGHT//2-50, 180, 100
+    box = pygame.Surface((bw,bh),pygame.SRCALPHA)
+    box.fill((12,22,55,245))
+    pygame.draw.rect(box,(60,110,200),(0,0,bw,bh),2,border_radius=10)
+    surf.blit(box,(bx,by))
+    ft=get_font(14,bold=True); tt=ft.render('게임을 종료할까요?',True,(200,225,255))
+    surf.blit(tt,(WIDTH//2-tt.get_width()//2, by+18))
+    # 확인
+    ok=pygame.Surface((52,28),pygame.SRCALPHA); ok.fill((180,40,40,230))
+    pygame.draw.rect(ok,(255,100,100),(0,0,52,28),1,border_radius=6)
+    surf.blit(ok,QUIT_OK_RECT.topleft)
+    fo=get_font(12,bold=True); to=fo.render('종료',True,(255,200,200))
+    surf.blit(to,(QUIT_OK_RECT.x+26-to.get_width()//2, QUIT_OK_RECT.y+14-to.get_height()//2))
+    # 취소
+    ca=pygame.Surface((52,28),pygame.SRCALPHA); ca.fill((30,70,50,230))
+    pygame.draw.rect(ca,(80,180,120),(0,0,52,28),1,border_radius=6)
+    surf.blit(ca,QUIT_CANCEL_RECT.topleft)
+    fc2=get_font(12,bold=True); tc2=fc2.render('취소',True,(160,240,190))
+    surf.blit(tc2,(QUIT_CANCEL_RECT.x+26-tc2.get_width()//2, QUIT_CANCEL_RECT.y+14-tc2.get_height()//2))
 
 
 def draw_new_game_warning(surf):
@@ -5248,6 +5321,7 @@ def main():
     cursor_blink        = 0
     show_ranking        = False
     show_new_game_warn  = False
+    show_quit_confirm   = False
     show_settings       = False
     show_online         = False
     online_x            = float(OW//2)
@@ -5267,7 +5341,11 @@ def main():
     online_action_phase  = 0.0
     online_npc_t         = 0.0
     online_join_t        = 0
-    online_self_pushed   = None   # 로컬 플레이어 밀림 상태 {'timer','max_t','vx','vy'}
+    online_self_pushed   = None
+    online_status_msg    = ''
+    show_status_input    = False
+    status_input         = ''
+    status_ime           = ''   # 로컬 플레이어 밀림 상태 {'timer','max_t','vx','vy'}
     push_fetch_t         = 0
     _applied_push_t      = {}     # nick → 마지막 처리한 push 이벤트 timestamp
     online_npc_cur_x     = float(OW//2+60)
@@ -5338,8 +5416,13 @@ def main():
     while running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                save_game(inventory, _current_stage, cult_docs, aquarium, player_nickname)
-                running = False
+                show_quit_confirm = True
+            if show_quit_confirm and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if QUIT_OK_RECT.collidepoint(event.pos):
+                    save_game(inventory,_current_stage,cult_docs,aquarium,player_nickname)
+                    running = False
+                elif QUIT_CANCEL_RECT.collidepoint(event.pos):
+                    show_quit_confirm = False
 
             elif show_intro:
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -5388,6 +5471,16 @@ def main():
                     elif event.key in (pygame.K_s,pygame.K_DOWN):  online_keys['s']=True
                     elif event.key in (pygame.K_a,pygame.K_LEFT):  online_keys['a']=True
                     elif event.key in (pygame.K_d,pygame.K_RIGHT): online_keys['d']=True
+                elif show_online and show_status_input:
+                    if event.key == pygame.K_RETURN:
+                        online_status_msg = status_input.strip()
+                        show_status_input = False; status_input = ''; status_ime = ''
+                        if not online_chat_active: pygame.key.stop_text_input()
+                    elif event.key == pygame.K_ESCAPE:
+                        show_status_input = False; status_input = ''; status_ime = ''
+                        if not online_chat_active: pygame.key.stop_text_input()
+                    elif event.key == pygame.K_BACKSPACE and not status_ime:
+                        status_input = status_input[:-1]
                 elif show_online and online_chat_active:
                     if event.key == pygame.K_RETURN and online_chat_input.strip():
                         import time as _tm3; online_local_chat=online_chat_input.strip(); online_local_chat_t=int(_tm3.time())
@@ -5415,7 +5508,8 @@ def main():
                     show_dev_add = not show_dev_add; show_dev_reset = False
                     show_dev_reset = not show_dev_reset
                 elif event.key == pygame.K_ESCAPE:
-                    if inv_detail is not None: inv_detail = None
+                    if show_quit_confirm: show_quit_confirm = False
+                    elif inv_detail is not None: inv_detail = None
                     elif show_bag: show_bag = False
                     elif aquarium_context is not None: aquarium_context = None
                     elif aquarium_adding: aquarium_adding = False
@@ -5433,16 +5527,18 @@ def main():
                     elif show_scroll: show_scroll = False
                     elif context: context = None
                     else:
-                        save_game(inventory, _current_stage, cult_docs, aquarium, player_nickname)
-                        running = False
+                        show_quit_confirm = True
 
             elif event.type == pygame.TEXTINPUT:
-                if online_chat_active and len(online_chat_input) < 40:
+                if show_status_input and len(status_input) < 30:
+                    status_input += event.text; status_ime = ''
+                elif online_chat_active and len(online_chat_input) < 40:
                     online_chat_input += event.text; online_chat_ime = ''
                 elif show_nickname_input and len(nickname_text) < 12:
                     nickname_text += event.text; ime_composition = ''
             elif event.type == pygame.TEXTEDITING:
-                if online_chat_active: online_chat_ime = event.text
+                if show_status_input: status_ime = event.text
+                elif online_chat_active: online_chat_ime = event.text
                 elif show_nickname_input: ime_composition = event.text
             elif event.type == pygame.MOUSEWHEEL:
                 if aquarium_adding:
@@ -5483,6 +5579,15 @@ def main():
                         # 나가기 버튼
                         if pygame.Rect(OW-58,4,52,22).collidepoint(mx,my):
                             show_online=False; stop_sse_stream(); remove_online_player(player_nickname)
+                        # 말풍선(상태메세지) 아이콘
+                        elif pygame.Rect(OW-53,OH_PLAY-28,18,18).collidepoint(mx,my):
+                            if online_status_msg:
+                                online_status_msg = ''; show_status_input = False
+                            else:
+                                show_status_input = not show_status_input
+                                if show_status_input:
+                                    status_input = ''; status_ime = ''
+                                    pygame.key.start_text_input()
                         # 휠 아이콘
                         elif pygame.Rect(OW-32,OH_PLAY-32,24,24).collidepoint(mx,my):
                             online_interact_open = not online_interact_open
@@ -5923,7 +6028,7 @@ def main():
             online_sync_t += 1
             if online_sync_t >= 2:
                 online_sync_t = 0
-                sync_online_pos(player_nickname, online_x, online_y, online_action, online_action_phase, equipped_item, online_push_anim_t, online_push_dir)
+                sync_online_pos(player_nickname, online_x, online_y, online_action, online_action_phase, equipped_item, online_push_anim_t, online_push_dir, online_status_msg)
             online_fetch_t += 1
             if online_fetch_t >= 90:  # 채팅만 주기적으로 fetch
                 online_fetch_t = 0
@@ -6014,7 +6119,8 @@ def main():
                               online_interact_open, online_action, online_action_phase,
                               online_selected, online_pushed,
                               online_push_anim_t, online_push_dir,
-                              equipped_item, online_self_pushed)
+                              equipped_item, online_self_pushed,
+                              online_status_msg, show_status_input, status_input, status_ime)
         if show_settings:
             draw_settings_screen(screen, bgm_vol, sfx_vol, chat_vol)
         if show_ranking:
@@ -6137,6 +6243,8 @@ def main():
                 nt_s = fn_n.render(msg_n, True, (175, 218, 255))
                 screen.blit(nt_s, (int(notice_x), 2))
 
+        if show_quit_confirm:
+            draw_quit_confirm(screen)
         pygame.display.flip()
         clock.tick(FPS)
 
