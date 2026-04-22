@@ -2427,7 +2427,7 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
         chat_t = _nick_chat(nick)
         if chat_t:
             _draw_online_chat_bubble(surf,px2,_p_bubble_y,chat_t)
-            _p_bubble_y -= (get_font(10,bold=True).size(chat_t)[1]+20)
+            _p_bubble_y -= (get_font(10,bold=True).size(chat_t)[1]+8)
         if _p_status:
             _draw_status_bubble(surf,px2,_p_bubble_y,_p_status)
         # 다른 플레이어 착용 아이템
@@ -2483,7 +2483,7 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
     _bubble_y = _nick_y
     if local_chat and now2-local_chat_t<10:
         _draw_online_chat_bubble(surf,int(lx),_bubble_y,local_chat)
-        _bubble_y -= (get_font(10,bold=True).size(local_chat)[1] + 20)
+        _bubble_y -= (get_font(10,bold=True).size(local_chat)[1] + 8)
     if status_msg:
         _draw_status_bubble(surf, int(lx), _bubble_y, status_msg)
     # 밀치기 팔 애니메이션
@@ -5464,14 +5464,7 @@ def main():
                         show_intro = False
 
             elif event.type == pygame.KEYDOWN:
-                if show_online and not online_chat_active:
-                    if event.key == pygame.K_RETURN:
-                        online_chat_active=True; pygame.key.start_text_input()
-                    elif event.key in (pygame.K_w,pygame.K_UP):    online_keys['w']=True
-                    elif event.key in (pygame.K_s,pygame.K_DOWN):  online_keys['s']=True
-                    elif event.key in (pygame.K_a,pygame.K_LEFT):  online_keys['a']=True
-                    elif event.key in (pygame.K_d,pygame.K_RIGHT): online_keys['d']=True
-                elif show_online and show_status_input:
+                if show_online and show_status_input:
                     if event.key == pygame.K_RETURN:
                         online_status_msg = status_input.strip()
                         show_status_input = False; status_input = ''; status_ime = ''
@@ -5479,8 +5472,16 @@ def main():
                     elif event.key == pygame.K_ESCAPE:
                         show_status_input = False; status_input = ''; status_ime = ''
                         if not online_chat_active: pygame.key.stop_text_input()
-                    elif event.key == pygame.K_BACKSPACE and not status_ime:
-                        status_input = status_input[:-1]
+                    elif event.key == pygame.K_BACKSPACE:
+                        if not status_ime: status_input = status_input[:-1]
+                        else: status_ime = ''
+                elif show_online and not online_chat_active:
+                    if event.key == pygame.K_RETURN:
+                        online_chat_active=True; pygame.key.start_text_input()
+                    elif event.key in (pygame.K_w,pygame.K_UP):    online_keys['w']=True
+                    elif event.key in (pygame.K_s,pygame.K_DOWN):  online_keys['s']=True
+                    elif event.key in (pygame.K_a,pygame.K_LEFT):  online_keys['a']=True
+                    elif event.key in (pygame.K_d,pygame.K_RIGHT): online_keys['d']=True
                 elif show_online and online_chat_active:
                     if event.key == pygame.K_RETURN and online_chat_input.strip():
                         import time as _tm3; online_local_chat=online_chat_input.strip(); online_local_chat_t=int(_tm3.time())
