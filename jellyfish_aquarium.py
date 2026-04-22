@@ -87,16 +87,31 @@ def calc_score(inventory):
 _rankings_cache   = []
 _rankings_loading = False
 
+def delete_ranking_bg(nickname):
+    def _d():
+        try:
+            import urllib.parse as _up2
+            safe = _up2.quote(nickname, safe='')
+            url  = FIREBASE_URL + f"rankings/{safe}.json"
+            if _fb_session: _fb_session.delete(url, timeout=5)
+            else:
+                import urllib.request as _ur
+                _ur.urlopen(_ur.Request(url,method='DELETE',headers={'User-Agent':'jellyfish-game'}),timeout=5)
+        except: pass
+    import threading as _t; _t.Thread(target=_d,daemon=True).start()
+
 def upload_score_bg(nickname, score):
     def _up():
         try:
-            import urllib.request as _ur, urllib.parse as _up2, json as _j
+            import urllib.parse as _up2
             safe_nick = _up2.quote(nickname, safe='')
-            url  = FIREBASE_URL + f"rankings/{safe_nick}.json"
-            data = _j.dumps({"nickname":nickname,"score":score}).encode('utf-8')
-            req  = _ur.Request(url, data=data, method='PUT',
-                               headers={'Content-Type':'application/json','User-Agent':'jellyfish-game'})
-            _ur.urlopen(req, timeout=5)
+            url = FIREBASE_URL + f"rankings/{safe_nick}.json"
+            payload = {"nickname":nickname,"score":score}
+            if _fb_session: _fb_session.put(url, json=payload, timeout=5)
+            else:
+                import urllib.request as _ur, json as _j
+                _ur.urlopen(_ur.Request(url,_j.dumps(payload).encode(),'PUT',
+                            headers={'Content-Type':'application/json','User-Agent':'jellyfish-game'}),timeout=5)
         except: pass
     import threading as _t; _t.Thread(target=_up, daemon=True).start()
 
@@ -105,32 +120,52 @@ _online_players = {}   # nick → {x,y,nickname,last_seen}
 _online_chat    = []   # [{nick,text,time}]
 _push_events    = {}   # nick → {vx,vy,t} 최신 push 이벤트
 
-def sync_online_pos(nick, x, y, action=None, action_phase=0.0, equipped_item=None):
+# Firebase 전용 requests 세션 (TCP 연결 재사용 → 쓰기 지연 절감)
+try:
+    import requests as _req
+    _fb_session = _req.Session()
+    _fb_session.headers.update({'Content-Type': 'application/json', 'User-Agent': 'jellyfish-game'})
+except Exception:
+    _fb_session = None
+
+def sync_online_pos(nick, x, y, action=None, action_phase=0.0, equipped_item=None, push_anim_t=0, push_dir=(0,0)):
     def _s():
         try:
-            import urllib.request as _ur, urllib.parse as _up2, json as _j, time as _tm
+            import urllib.parse as _up2, time as _tm
             safe = _up2.quote(nick, safe='')
             url  = FIREBASE_URL + f"online/{safe}.json"
             payload = {"x":int(x),"y":int(y),"nickname":nick,"last_seen":int(_tm.time())}
             if action: payload['action'] = action; payload['action_phase'] = round(action_phase, 2)
             else:      payload['action'] = ''; payload['action_phase'] = 0.0
-            payload['equipped'] = equipped_item or ''
-            data = _j.dumps(payload).encode()
-            req  = _ur.Request(url,data=data,method='PUT',
-                               headers={'Content-Type':'application/json','User-Agent':'jellyfish-game'})
-            _ur.urlopen(req,timeout=3)
+            payload['equipped']   = equipped_item or ''
+            payload['push_start'] = round(_tm.time() - (18-push_anim_t)/60.0, 3) if push_anim_t > 0 else 0
+            payload['push_dir_x'] = round(push_dir[0], 2)
+            payload['push_dir_y'] = round(push_dir[1], 2)
+            if _fb_session:
+                _fb_session.put(url, json=payload, timeout=3)
+            else:
+                import urllib.request as _ur, json as _j
+                req = _ur.Request(url,_j.dumps(payload).encode(),'PUT',
+                                  headers={'Content-Type':'application/json','User-Agent':'jellyfish-game'})
+                _ur.urlopen(req, timeout=3)
         except: pass
     import threading as _t; _t.Thread(target=_s,daemon=True).start()
 
-def send_push_event(target_nick, vx, vy):
+def send_push_event(target_nick, vx, vy, pusher_nick='', pdx=0.0, pdy=0.0):
     def _p():
         try:
-            import urllib.request as _ur, urllib.parse as _up3, json as _j, time as _tm
+            import urllib.parse as _up3, time as _tm
             safe = _up3.quote(target_nick, safe='')
-            data = _j.dumps({'vx':round(vx,2),'vy':round(vy,2),'t':int(_tm.time())}).encode()
-            req  = _ur.Request(FIREBASE_URL+f'push_events/{safe}.json',data=data,method='PUT',
-                               headers={'Content-Type':'application/json','User-Agent':'jellyfish-game'})
-            _ur.urlopen(req,timeout=3)
+            url  = FIREBASE_URL + f'push_events/{safe}.json'
+            payload = {'vx':round(vx,2),'vy':round(vy,2),'t':int(_tm.time()),
+                       'pusher':pusher_nick,'pdx':round(pdx,2),'pdy':round(pdy,2)}
+            if _fb_session:
+                _fb_session.put(url, json=payload, timeout=3)
+            else:
+                import urllib.request as _ur, json as _j
+                req = _ur.Request(url,_j.dumps(payload).encode(),'PUT',
+                                  headers={'Content-Type':'application/json','User-Agent':'jellyfish-game'})
+                _ur.urlopen(req, timeout=3)
         except: pass
     import threading as _t; _t.Thread(target=_p,daemon=True).start()
 
@@ -149,11 +184,13 @@ def fetch_push_events():
 def remove_online_player(nick):
     def _r():
         try:
-            import urllib.request as _ur, urllib.parse as _up2
+            import urllib.parse as _up2
             safe = _up2.quote(nick, safe='')
-            req  = _ur.Request(FIREBASE_URL+f"online/{safe}.json",method='DELETE',
-                               headers={'User-Agent':'jellyfish-game'})
-            _ur.urlopen(req,timeout=3)
+            url  = FIREBASE_URL + f"online/{safe}.json"
+            if _fb_session: _fb_session.delete(url, timeout=3)
+            else:
+                import urllib.request as _ur
+                _ur.urlopen(_ur.Request(url,method='DELETE',headers={'User-Agent':'jellyfish-game'}),timeout=3)
         except: pass
     import threading as _t; _t.Thread(target=_r,daemon=True).start()
 
@@ -190,6 +227,21 @@ def start_sse_stream(nick_self):
                                         old=_online_players.get(k,{})
                                         v['cur_x']=old.get('cur_x',v['x'])
                                         v['cur_y']=old.get('cur_y',v['y'])
+                                        # 속도 계산 (데드 레코닝)
+                                        v['vx']=float(v['x']-old.get('x',v['x']))/4.0
+                                        v['vy']=float(v['y']-old.get('y',v['y']))/4.0
+                                        v['pred_x']=float(v['x']); v['pred_y']=float(v['y'])
+                                        # 새 액션 시작 시 phase 0부터, 같은 액션 유지 시 로컬 phase 보존
+                                        if v.get('action'):
+                                            if v.get('action')==old.get('action'):
+                                                v['action_phase']=old.get('action_phase',v.get('action_phase',0.0))
+                                            else:
+                                                v['action_phase']=0.0  # 새 액션 → 처음부터
+                                        # push_start 새로 수신 시 로컬 기준 시각 기록
+                                        if v.get('push_start',0) != old.get('push_start',0) and v.get('push_start',0) > 0:
+                                            v['local_push_t'] = _tm.time()
+                                        elif old.get('local_push_t'):
+                                            v['local_push_t'] = old['local_push_t']
                                     _online_players=new_op
                                 except: pass
                             buf=''
@@ -216,6 +268,9 @@ def fetch_online_bg(nick_self):
                 old=_online_players.get(k,{})
                 v['cur_x']=old.get('cur_x', v['x'])
                 v['cur_y']=old.get('cur_y', v['y'])
+                v['vx']=float(v['x']-old.get('x',v['x']))/4.0
+                v['vy']=float(v['y']-old.get('y',v['y']))/4.0
+                v['pred_x']=float(v['x']); v['pred_y']=float(v['y'])
             _online_players=new_op
         except: pass
         try:
@@ -229,12 +284,14 @@ def fetch_online_bg(nick_self):
 def send_online_chat(nick, text):
     def _sc():
         try:
-            import urllib.request as _ur, json as _j, time as _tm
-            url=FIREBASE_URL+"ochat.json"
-            data=_j.dumps({"nick":nick,"text":text,"t":int(_tm.time())}).encode()
-            req=_ur.Request(url,data=data,method='POST',
-                            headers={'Content-Type':'application/json','User-Agent':'jellyfish-game'})
-            _ur.urlopen(req,timeout=3)
+            import time as _tm
+            url = FIREBASE_URL + "ochat.json"
+            payload = {"nick":nick,"text":text,"t":int(_tm.time())}
+            if _fb_session: _fb_session.post(url, json=payload, timeout=3)
+            else:
+                import urllib.request as _ur, json as _j
+                _ur.urlopen(_ur.Request(url,_j.dumps(payload).encode(),'POST',
+                            headers={'Content-Type':'application/json','User-Agent':'jellyfish-game'}),timeout=3)
         except: pass
     import threading as _t; _t.Thread(target=_sc,daemon=True).start()
 
@@ -2353,6 +2410,19 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
         _p_equip = data.get('equipped','')
         if _p_equip and nick not in pushed:
             draw_player_item(surf,px2,py2,sp_sz,sp_h,_p_equip)
+        # 다른 플레이어 밀치기 팔 애니메이션 (push_event 수신 기준)
+        _arm_start = data.get('arm_start', 0)
+        if _arm_start > 0:
+            import time as _tr2
+            _ef = (_tr2.time() - _arm_start) * 60.0
+            if 0.0 <= _ef < 18.0:
+                _pdx = data.get('arm_dx', 1.0); _pdy = data.get('arm_dy', 0.0)
+                _prog = _ef / 18.0
+                _ext = math.sin(_prog * math.pi) * 32
+                _ax = int(px2+_pdx*(sp_sz//2+_ext)); _ay = int(py2+_pdy*(sp_h//2+_ext))
+                skin=(228,175,132)
+                pygame.draw.line(surf,skin,(px2,py2),(_ax,_ay),4)
+                pygame.draw.circle(surf,skin,(_ax,_ay),6)
         # 다른 플레이어 액션 애니메이션
         _p_action = data.get('action','')
         if _p_action and nick not in pushed:
@@ -2763,7 +2833,7 @@ def draw_ranking_screen(surf, rankings, loading, nickname=''):
     if not rankings:
         fl = get_font(14); tl = fl.render('아직 기록이 없어.', True, (80,110,160))
         surf.blit(tl, (WIDTH//2-tl.get_width()//2, HEIGHT//2)); return
-    medals = ['🥇','🥈','🥉']
+    medals = ['1.','2.','3.']
     for idx, r in enumerate(rankings):
         y_r = 58 + idx*46
         row = pygame.Surface((WIDTH-32, 38), pygame.SRCALPHA)
@@ -5196,8 +5266,10 @@ def main():
     online_action_timer  = 0
     online_action_phase  = 0.0
     online_npc_t         = 0.0
+    online_join_t        = 0
     online_self_pushed   = None   # 로컬 플레이어 밀림 상태 {'timer','max_t','vx','vy'}
     push_fetch_t         = 0
+    _applied_push_t      = {}     # nick → 마지막 처리한 push 이벤트 timestamp
     online_npc_cur_x     = float(OW//2+60)
     online_npc_cur_y     = float(OH_PLAY//2-40)
     online_selected      = None
@@ -5281,7 +5353,7 @@ def main():
                             if not DEV_MODE: _current_stage = 1
                             has_save = False
                             if player_nickname:
-                                upload_score_bg(player_nickname, 0)
+                                delete_ranking_bg(player_nickname)
                             player_nickname = ''; nickname_text = ''; ime_composition = ''
                             show_nickname_input = True
                             show_new_game_warn = False
@@ -5299,6 +5371,7 @@ def main():
                             aquarium = []; aquarium_fish_list = []
                             _bred_slots.clear(); update_unlocked_slots({})
                             if not DEV_MODE: _current_stage = 1
+                            if player_nickname: delete_ranking_bg(player_nickname)
                             player_nickname = ''; nickname_text = ''; ime_composition = ''
                             show_nickname_input = True
                             pygame.key.start_text_input()
@@ -5415,14 +5488,14 @@ def main():
                             online_interact_open = not online_interact_open
                         # 인터랙션 리스트 항목
                         elif online_interact_open:
-                            items=[('banzai',24),('dance',180)]
+                            items=[('banzai',60),('dance',180)]
                             iw,ih=115,36; wx_c=OW-20; ly_c=OH_PLAY-20-len(items)*ih-8
                             for i,(key,dur) in enumerate(items):
                                 iy=ly_c+i*ih
                                 lx_c=min(wx_c-iw//2, OW-iw-5)
                                 if pygame.Rect(lx_c,iy,iw,ih).collidepoint(mx,my):
                                     online_action=key; online_action_timer=dur; online_action_phase=0.0
-                                    online_interact_open=False; break
+                                    online_interact_open=False; online_sync_t=10; break
                             else:
                                 online_interact_open=False
                         else:
@@ -5445,9 +5518,10 @@ def main():
                                     online_pushed[online_selected] = {'timer':_max_t,'max_t':_max_t,'vx':_vx,'vy':_vy}
                                     online_push_anim_t = 18
                                     online_push_dir = (_ddx/_dlen, _ddy/_dlen)
+                                    online_sync_t = 10  # 즉시 동기화
                                     # Firebase에 push 이벤트 전송 (NPC 제외)
                                     if online_selected != '__npc__':
-                                        send_push_event(online_selected, _vx, _vy)
+                                        send_push_event(online_selected, _vx, _vy, player_nickname, _ddx/_dlen, _ddy/_dlen)
                                     online_selected = None
                                     _push_hit = True
                             if not _push_hit:
@@ -5765,13 +5839,15 @@ def main():
                         show_online = True
                         online_x = float(OW//2); online_y = float(OH_PLAY//2)
                         online_keys = {'w':False,'a':False,'s':False,'d':False}
-                        online_npc_t = 0.0; online_selected = None; online_pushed = {}; online_push_anim_t = 0
+                        online_npc_t = 0.0; online_selected = None; online_pushed = {}; online_push_anim_t = 0; _applied_push_t = {}
                         if DEV_MODE:
                             _online_players['__npc__'] = {
                                 'x': float(OW//2+60), 'y': float(OH_PLAY//2-40),
                                 'cur_x': float(OW//2+60), 'cur_y': float(OH_PLAY//2-40),
                                 'nickname': '테스트NPC', 'last_seen': 0
                             }
+                        _online_chat.clear()
+                        import time as _ojt; online_join_t = int(_ojt.time())
                         start_sse_stream(player_nickname)
                         fetch_online_bg(player_nickname)
                         show_bag=False; show_scroll=False; show_aquarium=False
@@ -5845,18 +5921,21 @@ def main():
             if online_keys['d'] and not online_chat_active: online_x = min(OW-20, online_x+spd)
             # 위치 동기화
             online_sync_t += 1
-            if online_sync_t >= 10:
+            if online_sync_t >= 2:
                 online_sync_t = 0
-                sync_online_pos(player_nickname, online_x, online_y, online_action, online_action_phase, equipped_item)
+                sync_online_pos(player_nickname, online_x, online_y, online_action, online_action_phase, equipped_item, online_push_anim_t, online_push_dir)
             online_fetch_t += 1
             if online_fetch_t >= 90:  # 채팅만 주기적으로 fetch
                 online_fetch_t = 0
                 fetch_online_bg(player_nickname)
-            # 보간: cur_x/cur_y를 target x/y로 부드럽게 이동 (밀치기 중인 플레이어 제외)
+            # 보간: cur_x/cur_y를 target x/y로 부드럽게 이동
             for _ok, _od in _online_players.items():
                 if _ok in online_pushed: continue
-                _od['cur_x'] = _od.get('cur_x', _od['x']) + (_od['x'] - _od.get('cur_x',_od['x'])) * 0.28
-                _od['cur_y'] = _od.get('cur_y', _od['y']) + (_od['y'] - _od.get('cur_y',_od['y'])) * 0.28
+                _od['cur_x'] = _od.get('cur_x', _od['x']) + (_od['x'] - _od.get('cur_x', _od['x'])) * 0.50
+                _od['cur_y'] = _od.get('cur_y', _od['y']) + (_od['y'] - _od.get('cur_y', _od['y'])) * 0.50
+                # action_phase 로컬 전진 (끊김 방지)
+                if _od.get('action'):
+                    _od['action_phase'] = _od.get('action_phase', 0.0) + 0.15
             is_mv = any(online_keys[k] for k in online_keys)
             if is_mv: online_move_phase += 0.18
             # 액션 애니메이션 업데이트
@@ -5896,18 +5975,30 @@ def main():
             if online_push_anim_t > 0: online_push_anim_t -= 1
             # push_events fetch (1.5초마다)
             push_fetch_t += 1
-            if push_fetch_t >= 90:
+            if push_fetch_t >= 30:
                 push_fetch_t = 0
                 fetch_push_events()
             # push_events 적용
+            import time as _pt2
             for _pn, _pe in list(_push_events.items()):
+                _evt_t = _pe.get('t', 0)
+                if _applied_push_t.get(_pn, 0) >= _evt_t: continue
                 _pmax = 70
                 if _pn == player_nickname:
-                    # 내가 밀렸을 때
                     if online_self_pushed is None:
                         online_self_pushed = {'timer':_pmax,'max_t':_pmax,'vx':_pe['vx'],'vy':_pe['vy']}
+                        _applied_push_t[_pn] = _evt_t
                 elif _pn in _online_players and _pn not in online_pushed:
                     online_pushed[_pn] = {'timer':_pmax,'max_t':_pmax,'vx':_pe['vx'],'vy':_pe['vy']}
+                    _applied_push_t[_pn] = _evt_t
+                # 밀친 유저(pusher) 팔 애니 트리거
+                _pusher = _pe.get('pusher', '')
+                if _pusher and _pusher in _online_players and _pusher != player_nickname:
+                    _online_players[_pusher]['arm_start'] = _pt2.time()
+                    _online_players[_pusher]['arm_dx'] = _pe.get('pdx', 1.0)
+                    _online_players[_pusher]['arm_dy'] = _pe.get('pdy', 0.0)
+                elif _pusher == player_nickname:
+                    pass  # 내가 밀친 팔은 로컬에서 이미 처리
             # 로컬 플레이어 밀림 업데이트
             if online_self_pushed:
                 online_self_pushed['timer'] -= 1
@@ -5915,8 +6006,9 @@ def main():
                 online_y = max(20, min(OH_PLAY-20, online_y + online_self_pushed['vy']))
                 online_self_pushed['vx'] *= 0.82; online_self_pushed['vy'] *= 0.82
                 if online_self_pushed['timer'] <= 0: online_self_pushed = None
+            _filtered_chat = [m for m in _online_chat if m.get('t',0) >= online_join_t]
             draw_online_world(screen, online_x, online_y, player_nickname,
-                              _online_players, _online_chat,
+                              _online_players, _filtered_chat,
                               online_chat_input, online_chat_active, online_chat_ime,
                               online_move_phase, online_local_chat, online_local_chat_t,
                               online_interact_open, online_action, online_action_phase,
