@@ -8,7 +8,7 @@ import threading
 import urllib.request as _url_req
 import webbrowser
 
-VERSION = '3.3.0'
+VERSION = '3.4.0'
 _latest_ver  = None   # None=확인중, ''=최신, 버전문자열=업데이트있음
 _release_url  = ''
 _download_url = ''   # exe 직접 다운로드 URL
@@ -151,6 +151,21 @@ _online_players = {}   # nick → {x,y,nickname,last_seen}
 _online_chat    = []   # [{nick,text,time}]
 _push_events    = {}   # nick → {vx,vy,t} 최신 push 이벤트
 _call_events    = {}   # nick → {caller,t} 최신 호출 이벤트
+def get_clipboard_text():
+    try:
+        import ctypes
+        u32=ctypes.windll.user32; k32=ctypes.windll.kernel32
+        if not u32.OpenClipboard(0): return ''
+        try:
+            h=u32.GetClipboardData(13)
+            if not h: return ''
+            ptr=k32.GlobalLock(h)
+            if not ptr: return ''
+            try: text=ctypes.wstring_at(ptr)
+            finally: k32.GlobalUnlock(h)
+            return text or ''
+        finally: u32.CloseClipboard()
+    except: return ''
 
 _SND_CALL_NOTIF = None
 
@@ -203,6 +218,7 @@ def fetch_call_events():
             _call_events={k:v for k,v in data.items() if now-v.get('t',0)<10}
         except: pass
     import threading as _t; _t.Thread(target=_fc,daemon=True).start()
+
 
 # Firebase 전용 requests 세션 (TCP 연결 재사용 → 쓰기 지연 절감)
 try:
@@ -265,6 +281,35 @@ def fetch_push_events():
             _push_events = {k:v for k,v in data.items() if now-v.get('t',0)<4}
         except: pass
     import threading as _t; _t.Thread(target=_fp,daemon=True).start()
+
+_stab_events = {}
+
+def send_stab_event(tx, ty, stabber_nick):
+    def _se():
+        try:
+            import urllib.parse as _up4, time as _tm4, json as _j4
+            safe = _up4.quote(stabber_nick, safe='')
+            url  = FIREBASE_URL + f'stab_events/{safe}.json'
+            payload = {'tx':int(tx),'ty':int(ty),'t':int(_tm4.time()),'stabber':stabber_nick}
+            if _fb_session: _fb_session.put(url, json=payload, timeout=3)
+            else:
+                import urllib.request as _ur4
+                _ur4.urlopen(_ur4.Request(url,_j4.dumps(payload).encode(),'PUT',
+                    headers={'Content-Type':'application/json','User-Agent':'jellyfish-game'}),timeout=3)
+        except: pass
+    import threading as _t; _t.Thread(target=_se,daemon=True).start()
+
+def fetch_stab_events():
+    def _fs():
+        global _stab_events
+        try:
+            import urllib.request as _ur, json as _j, time as _tm
+            req = _ur.Request(FIREBASE_URL+'stab_events.json',headers={'User-Agent':'jellyfish-game'})
+            with _ur.urlopen(req,timeout=3) as r: data=_j.loads(r.read()) or {}
+            now = int(_tm.time())
+            _stab_events = {k:v for k,v in data.items() if now-v.get('t',0)<3}
+        except: pass
+    import threading as _t; _t.Thread(target=_fs,daemon=True).start()
 
 def remove_online_player(nick):
     def _r():
@@ -2444,20 +2489,15 @@ def _draw_online_tentacles(surf, cx, cy, bw, bh, phase, moving):
         surf.blit(s,(bx-6, cy+bh//2))
 
 def _draw_online_chat_bubble(surf, cx, top_y, text):
-    fc = get_font(10, bold=True)
-    tw = fc.render(text, True, (30,30,50))
-    pad = 6
-    bw2 = min(tw.get_width()+pad*2, 160)
-    bh2 = tw.get_height()+pad
-    bx2 = max(2, min(OW-bw2-2, cx-bw2//2))
-    by2 = top_y - bh2 - 8
-    bs = pygame.Surface((bw2, bh2+6), pygame.SRCALPHA)
+    fc=get_font(10,bold=True); tw=fc.render(text,True,(30,30,50)); pad=6
+    bw2=min(tw.get_width()+pad*2,160); bh2=tw.get_height()+pad
+    bx2=max(2,min(OW-bw2-2,cx-bw2//2)); by2=top_y-bh2-8
+    bs=pygame.Surface((bw2,bh2+6),pygame.SRCALPHA)
     pygame.draw.rect(bs,(255,255,255,230),(0,0,bw2,bh2),border_radius=7)
     pygame.draw.rect(bs,(180,220,180,180),(0,0,bw2,bh2),1,border_radius=7)
-    tip = min(max(bw2//2,8),bw2-8)
+    tip=min(max(bw2//2,8),bw2-8)
     pygame.draw.polygon(bs,(255,255,255,230),[(tip-4,bh2),(tip+4,bh2),(tip,bh2+6)])
-    surf.blit(bs,(bx2,by2))
-    surf.blit(tw,(bx2+pad, by2+pad//2))
+    surf.blit(bs,(bx2,by2)); surf.blit(tw,(bx2+pad,by2+pad//2))
 
 
 def _draw_status_bubble(surf, cx, top_y, text):
@@ -2555,6 +2595,13 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
             surf.blit(btn_s,(bx2,by2))
             fb3=get_font(13,bold=True); tb3=fb3.render('밀치기',True,(255,235,220))
             surf.blit(tb3,(bx2+bw//2-tb3.get_width()//2,by2+bh//2-tb3.get_height()//2))
+            # 찌르기 버튼 (밀치기 위에)
+            stab_y = max(2, by2-bh-4)
+            stab_s=pygame.Surface((bw,bh),pygame.SRCALPHA); stab_s.fill((140,10,10,235))
+            pygame.draw.rect(stab_s,(220,50,50),(0,0,bw,bh),1,border_radius=5)
+            surf.blit(stab_s,(bx2,stab_y))
+            ts3=get_font(13,bold=True).render('찌르기',True,(255,200,200))
+            surf.blit(ts3,(bx2+bw//2-ts3.get_width()//2,stab_y+bh//2-ts3.get_height()//2))
     # 로컬 플레이어
     spr_l=pygame.transform.scale(PLAYER_BELL_SPRITE,(sp_sz,sp_h))
     if self_pushed:
@@ -2804,7 +2851,7 @@ def draw_online_jelly_icon(surf, x, y, highlighted=False):
 
 
 def draw_online_interact_list(surf, wx, wy, action):
-    items = [('banzai','만세하기'),(  'dance','춤추기')]
+    items = [('banzai','만세하기'),('dance','춤추기'),('smoking','흡연')]
     iw, ih = 115, 36
     ly = wy - len(items)*ih - 8
     for i,(key,label) in enumerate(items):
@@ -2839,6 +2886,67 @@ def _draw_online_action(surf, cx, cy, bw, bh, action, phase):
             ex=cx+side*int(bw*0.76); ey=sy+wave
             pygame.draw.line(surf,(*tc,215),(sx,sy),(ex,ey),thick)
             pygame.draw.circle(surf,(*tc,195),(ex,ey),max(2,bw//18))
+    elif action == 'smoking':
+        ps = max(2, bw // 16)  # 도트 1픽셀 단위
+        cig_x  = cx + int(bw * 0.38)
+        cig_y  = cy + int(bh * 0.22)
+        cig_h  = ps * 2
+        cig_len = int(bw * 0.52)
+        flt_w  = ps * 3
+        emb_w  = ps * 2
+        pap_w  = cig_len - flt_w - emb_w
+        # 필터 (갈색, 입 쪽)
+        pygame.draw.rect(surf, (185,115,48), (cig_x, cig_y - cig_h//2, flt_w, cig_h))
+        pygame.draw.rect(surf, (210,148,68), (cig_x, cig_y - cig_h//2, flt_w, ps))
+        # 담배 몸통 (크림색 도트 블록)
+        for b in range((pap_w + ps*2 - 1) // (ps*2)):
+            bx  = cig_x + flt_w + b * ps * 2
+            blk = min(ps * 2, cig_x + flt_w + pap_w - bx)
+            if blk <= 0: break
+            c1 = (236,226,208) if b%2==0 else (220,210,190)
+            c2 = (248,240,222) if b%2==0 else (234,224,205)
+            pygame.draw.rect(surf, c1, (bx, cig_y - cig_h//2, blk, cig_h))
+            pygame.draw.rect(surf, c2, (bx, cig_y - cig_h//2, blk, ps))
+        # 불씨 (빨간/주황 깜빡임)
+        emb_x = cig_x + flt_w + pap_w
+        fl = int(20 * abs(math.sin(phase * 3.5)))
+        pygame.draw.rect(surf, (215+fl, 60+fl, 8), (emb_x, cig_y - cig_h//2, emb_w, cig_h))
+        # 재 (끝 픽셀)
+        ash_x = emb_x + emb_w
+        pygame.draw.rect(surf, (72,75,78), (ash_x, cig_y - ps//2, ps, ps))
+        # 연기 (도트 풍 회색 입자, 위로 흩날림)
+        for i in range(4):
+            t   = (phase * 1.1 + i * 0.85) % (math.pi * 2)
+            sx2 = ash_x + ps + int(math.sin(t) * ps * 2) + i * ps
+            sy2 = cig_y - cig_h//2 - ps*2 - i * ps*3
+            alp = max(30, 195 - i*45)
+            g   = min(205, 135 + i*18)
+            smk = pygame.Surface((ps*2, ps*2), pygame.SRCALPHA)
+            smk.fill((g, g, g+10, alp))
+            surf.blit(smk, (sx2, sy2))
+
+
+
+
+def draw_pixel_knife(surf, kx, ky, tx, ty, progress):
+    angle = math.atan2(ty - ky, tx - kx)
+    reach = min(math.hypot(tx - kx, ty - ky) * 0.75, 44)
+    p = math.sin(progress * math.pi)
+    ox = int(math.cos(angle) * reach * p)
+    oy = int(math.sin(angle) * reach * p)
+    bx = kx + ox; by = ky + oy
+    ps = 3
+    kw, kh = ps * 9, ps * 3
+    knife = pygame.Surface((kw, kh), pygame.SRCALPHA)
+    pygame.draw.rect(knife, (95, 55, 20),  (0, ps // 2, ps * 3, ps * 2))
+    pygame.draw.rect(knife, (125, 76, 34), (0, ps // 2, ps * 3, ps))
+    pygame.draw.rect(knife, (60, 60, 72),  (ps * 3, 0, ps, kh))
+    pygame.draw.rect(knife, (175, 192, 208), (ps * 4, ps // 2, ps * 4, ps * 2))
+    pygame.draw.rect(knife, (210, 225, 238), (ps * 4, ps // 2, ps * 4, ps))
+    pygame.draw.polygon(knife, (195, 212, 225),
+                        [(ps * 8, ps // 2), (kw - 1, ps + ps // 2), (ps * 8, ps * 2 + ps // 2)])
+    rotated = pygame.transform.rotate(knife, -math.degrees(angle))
+    surf.blit(rotated, (bx - rotated.get_width() // 2, by - rotated.get_height() // 2))
 
 
 def draw_settings_icon(surf, rect):
@@ -5445,6 +5553,9 @@ def main():
     call_notif_timer     = 0
     pending_call_notif   = ''   # 창 포커스 시 표시 대기 중인 호출 메시지
     online_fx_particles  = []   # [x,y,vx,vy,life] 호출 이펙트 파티클   # 로컬 플레이어 밀림 상태 {'timer','max_t','vx','vy'}
+    stab_anim           = None   # {'timer','max_t','tx','ty'}
+    blood_particles     = []     # [x,y,vx,vy,life,size]
+    stab_btn_rect       = None   # 찌르기 버튼 rect
     push_fetch_t         = 0
     _applied_push_t      = {}     # nick → 마지막 처리한 push 이벤트 timestamp
     online_npc_cur_x     = float(OW//2+60)
@@ -5578,6 +5689,9 @@ def main():
                     elif event.key == pygame.K_BACKSPACE:
                         if not status_ime: status_input = status_input[:-1]
                         else: status_ime = ''
+                    elif event.key == pygame.K_v and (event.mod & pygame.KMOD_CTRL):
+                        _cv=get_clipboard_text()
+                        if _cv: status_input=(status_input+_cv.strip())[:30]
                 elif show_online and not online_chat_active:
                     if event.key == pygame.K_RETURN:
                         online_chat_active=True; pygame.key.start_text_input()
@@ -5595,6 +5709,9 @@ def main():
                         online_chat_active=False; online_chat_input=''; pygame.key.stop_text_input()
                     elif event.key == pygame.K_BACKSPACE and not online_chat_ime:
                         online_chat_input=online_chat_input[:-1]
+                    elif event.key == pygame.K_v and (event.mod & pygame.KMOD_CTRL):
+                        _cv=get_clipboard_text()
+                        if _cv: online_chat_input=(online_chat_input+_cv.strip())[:120]
                 elif show_nickname_input:
                     if event.key == pygame.K_RETURN and nickname_text.strip():
                         player_nickname = nickname_text.strip()[:12]
@@ -5603,9 +5720,11 @@ def main():
                         save_game(inventory, _current_stage, cult_docs, aquarium, player_nickname)
                         upload_score_bg(player_nickname, calc_score(inventory))
                     elif event.key == pygame.K_BACKSPACE:
-                        # 조합 중이면 조합 취소, 아니면 한 글자 삭제
                         if not ime_composition:
                             nickname_text = nickname_text[:-1]
+                    elif event.key == pygame.K_v and (event.mod & pygame.KMOD_CTRL):
+                        _cv=get_clipboard_text()
+                        if _cv: nickname_text=(nickname_text+_cv.strip())[:12]
                 elif DEV_MODE and event.key == pygame.K_r and not show_bag and not show_scroll and not show_aquarium and not show_intro:
                     show_dev_add = False
                 elif DEV_MODE and event.key == pygame.K_t and not show_bag and not show_scroll and not show_aquarium and not show_intro:
@@ -5621,7 +5740,7 @@ def main():
                     elif show_aquarium:   show_aquarium = False
                     elif online_chat_active:         online_chat_active=False; pygame.key.stop_text_input()
                     elif show_online:
-                        show_online=False; stop_sse_stream(); remove_online_player(player_nickname)
+                            show_online=False; stop_sse_stream(); remove_online_player(player_nickname); stab_anim=None; blood_particles=[]
                     elif show_settings:             show_settings = False; settings_dragging = None
                     elif show_ranking:              show_ranking = False
                     elif show_dev_reset:           show_dev_reset = False
@@ -5682,7 +5801,22 @@ def main():
                     if show_online:
                         # 나가기 버튼
                         if pygame.Rect(OW-58,4,52,22).collidepoint(mx,my):
-                            show_online=False; stop_sse_stream(); remove_online_player(player_nickname)
+                            show_online=False; stop_sse_stream(); remove_online_player(player_nickname); stab_anim=None; blood_particles=[]
+                        # 찌르기 버튼 클릭
+                        elif stab_btn_rect and stab_btn_rect.collidepoint(mx,my):
+                            if online_selected and online_selected in _online_players:
+                                _sd3=_online_players[online_selected]
+                                _stx=int(_sd3.get('cur_x',_sd3.get('x',190)))
+                                _sty=int(_sd3.get('cur_y',_sd3.get('y',200)))
+                                import random as _rbl2,math as _mbl2
+                                for _ in range(22):
+                                    _ba=_rbl2.uniform(0,_mbl2.pi*2);_bsp=_rbl2.uniform(3.0,7.0);_bsz=_rbl2.uniform(0.7,1.0)
+                                    blood_particles.append([float(_stx),float(_sty),_mbl2.cos(_ba)*_bsp,_mbl2.sin(_ba)*_bsp,_bsz,_bsz])
+                                for _ in range(18):
+                                    _ba=_rbl2.uniform(0,_mbl2.pi*2);_bsp=_rbl2.uniform(1.5,4.5);_bsz=_rbl2.uniform(0.3,0.6)
+                                    blood_particles.append([float(_stx),float(_sty),_mbl2.cos(_ba)*_bsp,_mbl2.sin(_ba)*_bsp,_bsz,_bsz])
+                                stab_anim={'timer':28,'max_t':28,'tx':_stx,'ty':_sty}
+                                if SND_KILL: SND_KILL.play()
                         # 말풍선(상태메세지) 아이콘
                         elif pygame.Rect(OW-53,OH_PLAY-28,18,18).collidepoint(mx,my):
                             if online_status_msg:
@@ -5697,7 +5831,7 @@ def main():
                             online_interact_open = not online_interact_open
                         # 인터랙션 리스트 항목
                         elif online_interact_open:
-                            items=[('banzai',60),('dance',180)]
+                            items=[('banzai',60),('dance',180),('smoking',300)]
                             iw,ih=115,36; wx_c=OW-20; ly_c=OH_PLAY-20-len(items)*ih-8
                             for i,(key,dur) in enumerate(items):
                                 iy=ly_c+i*ih
@@ -5724,7 +5858,7 @@ def main():
                                     call_selected=None
                                 else:
                                     call_selected=None
-                            # 밀치기 버튼 클릭 확인
+                            # 찌르기/밀치기 버튼 클릭 확인
                             _push_hit = False
                             if online_selected and online_selected in _online_players and online_selected not in online_pushed:
                                 _sd = _online_players[online_selected]
@@ -5734,7 +5868,21 @@ def main():
                                 _bw,_bh = 60,24
                                 _bx2 = max(2, min(OW-_bw-2, _px-_bw//2))
                                 _by2 = max(2, _py-_sp_h2//2-36)
+                                _stab_y2 = max(2, _by2-_bh-4)
                                 _dist_p = math.hypot(_px-online_x, _py-online_y)
+                                # 찌르기 버튼
+                                if pygame.Rect(_bx2,_stab_y2,_bw,_bh).collidepoint(mx,my) and _dist_p < 55:
+                                    import random as _rbs, math as _mbs
+                                    for _ in range(22):
+                                        _ba=_rbs.uniform(0,_mbs.pi*2);_bsp=_rbs.uniform(3.0,7.0);_bsz=_rbs.uniform(0.7,1.0)
+                                        blood_particles.append([float(_px),float(_py),_mbs.cos(_ba)*_bsp,_mbs.sin(_ba)*_bsp,_bsz,_bsz])
+                                    for _ in range(18):
+                                        _ba=_rbs.uniform(0,_mbs.pi*2);_bsp=_rbs.uniform(1.5,4.5);_bsz=_rbs.uniform(0.3,0.6)
+                                        blood_particles.append([float(_px),float(_py),_mbs.cos(_ba)*_bsp,_mbs.sin(_ba)*_bsp,_bsz,_bsz])
+                                    stab_anim={'timer':28,'max_t':28,'tx':_px,'ty':_py}
+                                    if SND_KILL: SND_KILL.play()
+                                    send_stab_event(_px, _py, player_nickname)
+                                    online_selected = None; _push_hit = True
                                 if pygame.Rect(_bx2,_by2,_bw,_bh).collidepoint(mx,my) and _dist_p < 55:
                                     _ddx = _px-online_x; _ddy = _py-online_y
                                     _dlen = max(1.0, math.hypot(_ddx,_ddy))
@@ -6154,12 +6302,13 @@ def main():
         draw_settings_icon(screen, SETTINGS_RECT)
         draw_online_icon(screen, ONLINE_RECT)
         if show_online:
-            # WASD 이동
+            # WASD 이동 (밤에 시민은 이동 불가)
             spd = 2.5
-            if online_keys['w'] and not online_chat_active: online_y = max(30, online_y-spd)
-            if online_keys['s'] and not online_chat_active: online_y = min(OH_PLAY-30, online_y+spd)
-            if online_keys['a'] and not online_chat_active: online_x = max(20, online_x-spd)
-            if online_keys['d'] and not online_chat_active: online_x = min(OW-20, online_x+spd)
+            if True:
+                if online_keys['w'] and not online_chat_active: online_y = max(30, online_y-spd)
+                if online_keys['s'] and not online_chat_active: online_y = min(OH_PLAY-30, online_y+spd)
+                if online_keys['a'] and not online_chat_active: online_x = max(20, online_x-spd)
+                if online_keys['d'] and not online_chat_active: online_x = min(OW-20, online_x+spd)
             # 위치 동기화
             online_sync_t += 1
             if online_sync_t >= 2:
@@ -6214,12 +6363,13 @@ def main():
                         _op2['cur_y'] = max(20, min(OH_PLAY-20, _op2.get('cur_y',_op2['y']) + _pv['vy']))
             online_pushed = new_pushed
             if online_push_anim_t > 0: online_push_anim_t -= 1
-            # push/call events fetch (0.5초마다)
+            # push/call/mafia events fetch (0.5초마다)
             push_fetch_t += 1
             if push_fetch_t >= 30:
                 push_fetch_t = 0
                 fetch_push_events()
                 fetch_call_events()
+                fetch_stab_events()
             # call_events 처리
             for _cn,_ce in list(_call_events.items()):
                 _cevt=_ce.get('t',0)
@@ -6255,6 +6405,33 @@ def main():
                     _online_players[_pusher]['arm_dy'] = _pe.get('pdy', 0.0)
                 elif _pusher == player_nickname:
                     pass  # 내가 밀친 팔은 로컬에서 이미 처리
+            # stab_events 처리 (다른 유저의 찌르기 수신)
+            import time as _stt
+            for _sn, _se in list(_stab_events.items()):
+                _se_t = _se.get('t', 0)
+                if _sn == player_nickname: continue  # 내가 찌른 건 이미 로컬 처리
+                if not hasattr(online_x, '__class__'): continue
+                _se_key = f'{_sn}_{_se_t}'
+                if not hasattr(draw_pixel_knife, '_applied_stabs'): draw_pixel_knife._applied_stabs = set()
+                if _se_key in draw_pixel_knife._applied_stabs: continue
+                if _stt.time() - _se_t < 3:
+                    draw_pixel_knife._applied_stabs.add(_se_key)
+                    _stx2 = _se.get('tx', 190); _sty2 = _se.get('ty', 200)
+                    import random as _rse, math as _mse
+                    for _ in range(22):
+                        _ba=_rse.uniform(0,_mse.pi*2); _bsp=_rse.uniform(3.0,7.0); _bsz=_rse.uniform(0.7,1.0)
+                        blood_particles.append([float(_stx2),float(_sty2),_mse.cos(_ba)*_bsp,_mse.sin(_ba)*_bsp,_bsz,_bsz])
+                    for _ in range(18):
+                        _ba=_rse.uniform(0,_mse.pi*2); _bsp=_rse.uniform(1.5,4.5); _bsz=_rse.uniform(0.3,0.6)
+                        blood_particles.append([float(_stx2),float(_sty2),_mse.cos(_ba)*_bsp,_mse.sin(_ba)*_bsp,_bsz,_bsz])
+                    # 칼 애니 (찌른 사람 위치 → 타겟)
+                    _stabber = _se.get('stabber','')
+                    if _stabber in _online_players:
+                        _spd = _online_players[_stabber]
+                        _skx = int(_spd.get('cur_x',_spd.get('x',190)))
+                        _sky = int(_spd.get('cur_y',_spd.get('y',200)))
+                        stab_anim = {'timer':28,'max_t':28,'kx':_skx,'ky':_sky,'tx':_stx2,'ty':_sty2}
+                    if SND_KILL: SND_KILL.play()
             # 로컬 플레이어 밀림 업데이트
             if online_self_pushed:
                 online_self_pushed['timer'] -= 1
@@ -6273,6 +6450,28 @@ def main():
                               equipped_item, online_self_pushed,
                               online_status_msg, show_status_input, status_input, status_ime,
                               call_selected)
+            # 찌르기 애니메이션
+            if stab_anim:
+                _sa=stab_anim
+                _sa['timer']-=1
+                _sp=1.0-_sa['timer']/_sa['max_t']
+                _kx0=_sa.get('kx',int(online_x)); _ky0=_sa.get('ky',int(online_y))
+                draw_pixel_knife(screen,_kx0,_ky0,_sa['tx'],_sa['ty'],_sp)
+                if _sa['timer']<=0: stab_anim=None
+            # 피 파티클 (중력 적용)
+            _new_bp=[]
+            for _bp in blood_particles:
+                _bp[3]+=0.20
+                _bp[0]+=_bp[2]; _bp[1]+=_bp[3]
+                _bp[2]*=0.88; _bp[4]-=0.032
+                if _bp[4]>0:
+                    _bpr=max(2,int(_bp[5]*10*_bp[4]))
+                    _bps=pygame.Surface((_bpr*2+2,_bpr*2+2),pygame.SRCALPHA)
+                    _bpc=(int(185+15*_bp[4]),int(8+6*_bp[4]),8,int(_bp[4]*240))
+                    pygame.draw.circle(_bps,_bpc,(_bpr+1,_bpr+1),_bpr)
+                    screen.blit(_bps,(int(_bp[0])-_bpr-1,int(_bp[1])-_bpr-1))
+                    _new_bp.append(_bp)
+            blood_particles=_new_bp
             # 호출 이펙트 파티클 (온라인 월드 위에)
             new_fx=[]
             for _fp in online_fx_particles:
