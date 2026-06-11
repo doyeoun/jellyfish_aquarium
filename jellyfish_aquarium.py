@@ -8,7 +8,7 @@ import threading
 import urllib.request as _url_req
 import webbrowser
 
-VERSION = '3.4.0'
+VERSION = '3.4.1'
 _latest_ver  = None   # None=확인중, ''=최신, 버전문자열=업데이트있음
 _release_url  = ''
 _download_url = ''   # exe 직접 다운로드 URL
@@ -965,9 +965,9 @@ JELLY_GRADES = {
     21: 'legendary', # 황금 해파리
     22: 'secret',    # 무지개 해파리
     23: 'secret',    # 파분 해파리
-    24: 'lock',      # 푸딩 해파리 (원래: epic)
-    25: 'lock',      # 소다맛 푸딩 해파리 (원래: epic)
-    26: 'lock',      # 벚꽃 해파리 (원래: epic)
+    24: 'epic',      # 푸딩 해파리
+    25: 'epic',      # 소다맛 푸딩 해파리
+    26: 'epic',      # 벚꽃 해파리
     27: 'secret',    # 쌍둥이 해파리
 }
 
@@ -1674,6 +1674,7 @@ WARDROBE_ITEM_DEFS = [
     ('frog_hat_item', '개구리 모자'),
     ('foxfire',       '여우불'),
     ('blossom_pin',   '벚꽃 핀'),
+    ('elec_spark',    '전기 스파크'),
 ]
 # 특정 해파리만 드랍 가능 (design_idx → item_id 목록). 없으면 공용 드랍
 WARDROBE_DROP_MAP = {
@@ -1690,6 +1691,7 @@ WARDROBE_DROP_MAP = {
     18: ['foxfire'],           # 저주받은 해파리
     26: ['blossom_pin'],       # 벚꽃 해파리
     8:  ['angel_halo'],        # 천사 해파리
+    4:  ['elec_spark'],        # 전기 해파리
 }
 WARDROBE_COMMON_DROPS = ['redcap', 'headset']
 DEV_RESET_BACK   = pygame.Rect(15, 12, 75, 28)
@@ -2117,6 +2119,18 @@ def draw_wardrobe_item_icon(surf, cx, cy, item_id, unlocked=True):
         pygame.draw.line(surf, ac2, (cx-10,cy-6),(cx-3,cy-2), thick2)
         # 오른쪽 눈썹 / (안낮음, 바깥높음)
         pygame.draw.line(surf, ac2, (cx+3,cy-2),(cx+10,cy-6), thick2)
+    elif item_id == 'elec_spark':
+        ec_i = c((235,215,8),(60,80,110)); eh_i = c((255,255,200),(70,90,120))
+        ps_i = 2
+        # 방사형 픽셀 스파크 8방향
+        for seg_i, ox_i, oy_i in [(3,1,0),(3,-1,0),(2,0,1),(2,0,-1),(2,1,-1),(2,-1,1),(2,1,1),(2,-1,-1)]:
+            for k_i in range(1, seg_i+1):
+                pygame.draw.rect(surf, ec_i, (cx+ox_i*(k_i+1)*ps_i, cy+oy_i*(k_i+1)*ps_i, ps_i, ps_i))
+        # 외곽 점 스파크
+        for sox, soy in [(-8,-4),(8,-4),(-9,2),(9,2),(-5,7),(5,7),(0,-9)]:
+            pygame.draw.rect(surf, ec_i, (cx+sox, cy+soy, ps_i, ps_i))
+        # 중심 코어
+        pygame.draw.rect(surf, eh_i, (cx-1, cy-1, 3, 3))
     elif item_id == 'headset':
         bk = c((12,12,12),(42,52,82)); dg = c((50,50,50),(50,60,90)); pd = c((8,8,10),(40,50,80))
         # 왼쪽 이어컵 (동그란)
@@ -2836,6 +2850,31 @@ def draw_player_item(surf, cx, cy, bw, bh, item_id):
             surf.blit(_gs4,(_ox-_or*2-1,_oy-_or*2-1))
             pygame.draw.circle(surf,(_r2,_g2,5),(_ox,_oy),_or)
             pygame.draw.circle(surf,(255,min(255,_g2+60),25),(_ox,_oy),max(1,_or-1))
+    elif item_id == 'elec_spark':
+        _t_es = pygame.time.get_ticks() * 0.001
+        ps_e = max(2, bw // 10)
+        for _i_es in range(10):
+            _r_es = 0.18 + abs(math.sin(_t_es*2.3 + _i_es*1.8)) * 0.58
+            _sx_es = cx + int(math.sin(_t_es*7.1 + _i_es*2.5) * bw * _r_es)
+            _sy_es = cy + int(math.sin(_t_es*6.3 + _i_es*1.9) * bh * _r_es * 0.75)
+            _vis_e = abs(math.sin(_t_es*11.3 + _i_es*3.1))
+            if _vis_e < 0.45:
+                continue
+            _bright_e = int(190 + _vis_e * 65)
+            _col_es = (_bright_e, int(_bright_e * 0.92), 8)
+            _seg_e = 1 + int(abs(math.sin(_t_es*5.7 + _i_es*1.3)) * 2)
+            _ori_e = int(abs(_t_es*3.1 + _i_es*2.7)) % 4
+            if _ori_e == 0:
+                pygame.draw.rect(surf, _col_es, (_sx_es, _sy_es, _seg_e*ps_e, ps_e))
+            elif _ori_e == 1:
+                pygame.draw.rect(surf, _col_es, (_sx_es, _sy_es, ps_e, _seg_e*ps_e))
+            elif _ori_e == 2:
+                for _k_e in range(_seg_e):
+                    pygame.draw.rect(surf, _col_es, (_sx_es+_k_e*ps_e, _sy_es-_k_e*ps_e, ps_e, ps_e))
+            else:
+                for _k_e in range(_seg_e):
+                    pygame.draw.rect(surf, _col_es, (_sx_es+_k_e*ps_e, _sy_es+_k_e*ps_e, ps_e, ps_e))
+            pygame.draw.rect(surf, (255, 255, 215), (_sx_es, _sy_es, ps_e, ps_e))
 
 
 def draw_online_jelly_icon(surf, x, y, highlighted=False):
@@ -2851,7 +2890,7 @@ def draw_online_jelly_icon(surf, x, y, highlighted=False):
 
 
 def draw_online_interact_list(surf, wx, wy, action):
-    items = [('banzai','만세하기'),('dance','춤추기'),('smoking','흡연')]
+    items = [('banzai','만세하기'),('dance','춤추기'),('smoking','흡연'),('thumbsup','따봉')]
     iw, ih = 115, 36
     ly = wy - len(items)*ih - 8
     for i,(key,label) in enumerate(items):
@@ -2886,6 +2925,23 @@ def _draw_online_action(surf, cx, cy, bw, bh, action, phase):
             ex=cx+side*int(bw*0.76); ey=sy+wave
             pygame.draw.line(surf,(*tc,215),(sx,sy),(ex,ey),thick)
             pygame.draw.circle(surf,(*tc,195),(ex,ey),max(2,bw//18))
+    elif action == 'thumbsup':
+        # 따봉: 오른팔 들고 엄지척, 살짝 튕기는 리듬
+        bob = int(math.sin(phase * 3.2) * bh * 0.035)
+        # 위팔 (어깨 → 팔꿈치)
+        s1x = cx + int(bw * 0.40); s1y = cy + bh // 8
+        e1x = cx + int(bw * 0.66); e1y = cy + int(bh * 0.04) + bob
+        pygame.draw.line(surf, (*tc, 215), (s1x, s1y), (e1x, e1y), thick)
+        # 아래팔 (팔꿈치 → 손목)
+        e2x = cx + int(bw * 0.80); e2y = cy - int(bh * 0.26) + bob
+        pygame.draw.line(surf, (*tc, 215), (e1x, e1y), (e2x, e2y), thick)
+        # 주먹
+        fist_r = max(3, bw // 11)
+        pygame.draw.circle(surf, tc, (e2x, e2y), fist_r)
+        # 엄지 (위로 뻗음)
+        tbx = e2x + int(bw * 0.03); tby = e2y - int(bh * 0.22) + bob
+        pygame.draw.line(surf, (*tc, 225), (e2x, e2y - fist_r + 1), (tbx, tby), max(2, thick - 1))
+        pygame.draw.circle(surf, (*tc, 210), (tbx, tby), max(2, bw // 20))
     elif action == 'smoking':
         ps = max(2, bw // 16)  # 도트 1픽셀 단위
         cig_x  = cx + int(bw * 0.38)
@@ -5831,7 +5887,7 @@ def main():
                             online_interact_open = not online_interact_open
                         # 인터랙션 리스트 항목
                         elif online_interact_open:
-                            items=[('banzai',60),('dance',180),('smoking',300)]
+                            items=[('banzai',60),('dance',180),('smoking',300),('thumbsup',120)]
                             iw,ih=115,36; wx_c=OW-20; ly_c=OH_PLAY-20-len(items)*ih-8
                             for i,(key,dur) in enumerate(items):
                                 iy=ly_c+i*ih
