@@ -407,16 +407,21 @@ def fetch_online_bg(nick_self):
             import urllib.request as _ur2, json as _j2
             req2=_ur2.Request(FIREBASE_URL+"ochat.json",headers={'User-Agent':'jellyfish-game'})
             with _ur2.urlopen(req2,timeout=3) as r2: d2=_j2.loads(r2.read())
-            if d2: _online_chat=sorted(d2.values(),key=lambda x:x.get('t',0))[-8:]
+            if d2:
+                fb_msgs = sorted(d2.values(), key=lambda x: x.get('t',0))[-8:]
+                # Firebase에 아직 없는 로컬 메시지 보존
+                fb_keys = {(m.get('nick'), m.get('t')) for m in fb_msgs}
+                local_only = [m for m in _online_chat if (m.get('nick'), m.get('t')) not in fb_keys]
+                _online_chat = sorted(fb_msgs + local_only, key=lambda x: x.get('t',0))[-8:]
         except: pass
     import threading as _t; _t.Thread(target=_f,daemon=True).start()
 
-def send_online_chat(nick, text):
+def send_online_chat(nick, text, t=None):
+    import time as _tbase; _ts = t if t is not None else int(_tbase.time())
     def _sc():
         try:
-            import time as _tm
             url = FIREBASE_URL + "ochat.json"
-            payload = {"nick":nick,"text":text,"t":int(_tm.time())}
+            payload = {"nick":nick,"text":text,"t":_ts}
             if _fb_session: _fb_session.post(url, json=payload, timeout=3)
             else:
                 import urllib.request as _ur, json as _j
@@ -424,6 +429,7 @@ def send_online_chat(nick, text):
                             headers={'Content-Type':'application/json','User-Agent':'jellyfish-game'}),timeout=3)
         except: pass
     import threading as _t; _t.Thread(target=_sc,daemon=True).start()
+    return _ts
 
 
 def fetch_rankings_bg():
@@ -6070,8 +6076,8 @@ def main():
                     if event.key == pygame.K_RETURN and online_chat_input.strip():
                         import time as _tm3; _msg3=online_chat_input.strip()
                         online_local_chat=_msg3; online_local_chat_t=int(_tm3.time())
-                        send_online_chat(player_nickname, _msg3)
-                        _online_chat.append({'nick':player_nickname,'text':_msg3,'t':int(_tm3.time())})
+                        _ts3 = send_online_chat(player_nickname, _msg3)
+                        _online_chat.append({'nick':player_nickname,'text':_msg3,'t':_ts3})
                         _online_chat[:] = sorted(_online_chat,key=lambda x:x.get('t',0))[-8:]
                         online_chat_input=''; online_chat_ime=''
                         online_chat_active=False; pygame.key.stop_text_input()
@@ -6115,8 +6121,8 @@ def main():
                     if event.key == pygame.K_RETURN and pinned_chat_input.strip():
                         import time as _tm4; _msg4=pinned_chat_input.strip()
                         online_local_chat = _msg4; online_local_chat_t = int(_tm4.time())
-                        send_online_chat(player_nickname, _msg4)
-                        _online_chat.append({'nick':player_nickname,'text':_msg4,'t':int(_tm4.time())})
+                        _ts4 = send_online_chat(player_nickname, _msg4)
+                        _online_chat.append({'nick':player_nickname,'text':_msg4,'t':_ts4})
                         _online_chat[:] = sorted(_online_chat,key=lambda x:x.get('t',0))[-8:]
                         _filtered_chat = [m for m in _online_chat if m.get('t',0) >= online_join_t]
                         pinned_chat_input = ''; pinned_chat_ime = ''
