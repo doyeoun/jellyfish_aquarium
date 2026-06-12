@@ -8,7 +8,7 @@ import threading
 import urllib.request as _url_req
 import webbrowser
 
-VERSION = '3.4.2'
+VERSION = '3.4.3'
 _latest_ver  = None   # None=확인중, ''=최신, 버전문자열=업데이트있음
 _release_url  = ''
 _download_url = ''   # exe 직접 다운로드 URL
@@ -2615,7 +2615,7 @@ def _draw_status_bubble(surf, cx, top_y, text):
     surf.blit(tw,(bx2+pad, by2+pad//2))
 
 
-def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_active, chat_ime, move_phase=0.0, local_chat='', local_chat_t=0, interact_open=False, action=None, action_phase=0.0, selected=None, pushed=None, push_anim_t=0, push_dir=(1,0), equipped_item=None, self_pushed=None, status_msg='', show_status_input=False, status_input_text='', status_input_ime='', call_selected=None):
+def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_active, chat_ime, move_phase=0.0, local_chat='', local_chat_t=0, interact_open=False, action=None, action_phase=0.0, selected=None, pushed=None, push_anim_t=0, push_dir=(1,0), equipped_item=None, self_pushed=None, status_msg='', show_status_input=False, status_input_text='', status_input_ime='', call_selected=None, chat_pinned=False):
     global _online_bg
     if _online_bg is None: _online_bg = make_online_bg()
     surf.blit(_online_bg,(0,0))
@@ -2737,6 +2737,16 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
     # 로컬 액션
     if move_phase and hasattr(move_phase,'__float__'):
         _draw_online_tentacles(surf,int(lx),int(ly),sp_sz,sp_h,move_phase,any(online_keys.values()) if 'online_keys' in dir() else False)
+    # 압정 아이콘 (채팅창 좌측 상단, 인터랙션 아이콘과 같은 선상)
+    pin_x, pin_y = 16, OH_PLAY - 18
+    _pc = (255,185,40) if chat_pinned else (100,145,125)
+    _po = (180,120,15) if chat_pinned else (55,95,80)
+    pygame.draw.circle(surf, _po, (pin_x, pin_y-5), 7)        # 머리 테두리
+    pygame.draw.circle(surf, _pc, (pin_x, pin_y-5), 6)        # 머리
+    pygame.draw.circle(surf, (255,255,255), (pin_x-2, pin_y-8), 2)  # 광택
+    pygame.draw.line(surf, _po, (pin_x, pin_y+1), (pin_x, pin_y+9), 3)  # 핀 테두리
+    pygame.draw.line(surf, _pc, (pin_x, pin_y+1), (pin_x, pin_y+9), 2)  # 핀
+    pygame.draw.polygon(surf, _po, [(pin_x-2,pin_y+9),(pin_x+2,pin_y+9),(pin_x,pin_y+12)])  # 뾰족 끝
     # 채팅 영역
     chat_bg=pygame.Surface((OW,OH_CHAT),pygame.SRCALPHA)
     chat_bg.fill((5,15,35,215))
@@ -2786,7 +2796,7 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
         surf.blit(si_bg,(8,si_y))
         fsi=get_font(11); tsi=fsi.render((status_input_text+status_input_ime)[:38] or '상태메세지 입력...',True,(200,230,255) if (status_input_text or status_input_ime) else (80,120,180))
         surf.blit(tsi,(12,si_y+4))
-    # 나가기
+    # 나가기 (원래 우측 위치)
     bk=pygame.Surface((52,22),pygame.SRCALPHA)
     bk.fill((25,55,40,210))
     pygame.draw.rect(bk,(60,160,100),(0,0,52,22),1,border_radius=5)
@@ -3035,6 +3045,37 @@ def draw_player_item(surf, cx, cy, bw, bh, item_id):
             pygame.draw.line(_ts, (*_tc,190),(5,0),(5+_sw2,_tl),2)
             pygame.draw.circle(_ts,(*_tc,165),(5+_sw2,_tl),max(1,_tl//5))
             surf.blit(_ts,(_tx-5,_ty))
+
+
+PINNED_CHAT_RECT = pygame.Rect(10, HEIGHT - 142, 260, 140)
+PINNED_INPUT_RECT = pygame.Rect(10, HEIGHT - 30, 260, 24)
+
+def draw_pinned_chat_overlay(surf, chat_msgs, lnick, input_text='', input_active=False, ime=''):
+    """메인 화면에 표시되는 핀된 채팅 오버레이."""
+    cw = 260
+    cx2, cy2 = 10, HEIGHT - 142
+    # 메시지 배경
+    bg = pygame.Surface((cw, 110), pygame.SRCALPHA)
+    bg.fill((5, 15, 35, 185))
+    pygame.draw.rect(bg, (40, 100, 80, 200), (0, 0, cw, 110), 1, border_radius=6)
+    surf.blit(bg, (cx2, cy2))
+    fc3 = get_font(11)
+    for idx, msg in enumerate(chat_msgs[-5:]):
+        col3 = (255, 240, 140) if msg.get('nick') == lnick else (185, 225, 200)
+        mt3 = fc3.render(f"{msg.get('nick','?')}: {msg.get('text','')}"[:34], True, col3)
+        surf.blit(mt3, (cx2 + 8, cy2 + 8 + idx * 18))
+    # 압정 표시
+    pygame.draw.circle(surf, (255, 185, 40), (cx2 + cw - 12, cy2 + 10), 5)
+    pygame.draw.line(surf, (255, 185, 40), (cx2 + cw - 12, cy2 + 15), (cx2 + cw - 12, cy2 + 20), 2)
+    # 입력창
+    inp_bg = pygame.Surface((cw, 24), pygame.SRCALPHA)
+    inp_bg.fill((20, 50, 40, 210) if input_active else (12, 30, 25, 185))
+    pygame.draw.rect(inp_bg, (60, 160, 100) if input_active else (35, 90, 65), (0, 0, cw, 24), 1, border_radius=5)
+    surf.blit(inp_bg, (cx2, HEIGHT - 30))
+    disp = (input_text + ime) if input_active else '채팅 입력...'
+    col4 = (220, 245, 220) if input_active else (100, 140, 115)
+    ti2 = fc3.render(disp[:38], True, col4)
+    surf.blit(ti2, (cx2 + 6, HEIGHT - 26))
 
 
 def draw_online_jelly_icon(surf, x, y, highlighted=False):
@@ -5856,12 +5897,17 @@ def main():
     online_move_phase    = 0.0
     online_local_chat    = ''
     online_local_chat_t  = 0
-    online_interact_open = False
+    online_interact_open   = False
+    chat_pinned            = False
+    pinned_chat_input      = ''
+    pinned_chat_active     = False
+    pinned_chat_ime        = ''
     online_action        = None
     online_action_timer  = 0
     online_action_phase  = 0.0
     online_npc_t         = 0.0
     online_join_t        = 0
+    _filtered_chat       = []   # 온라인 월드 밖에서도 유지
     online_self_pushed   = None
     online_status_msg    = ''
     show_status_input    = False
@@ -6022,8 +6068,11 @@ def main():
                     elif event.key in (pygame.K_d,pygame.K_RIGHT): online_keys['d']=True
                 elif show_online and online_chat_active:
                     if event.key == pygame.K_RETURN and online_chat_input.strip():
-                        import time as _tm3; online_local_chat=online_chat_input.strip(); online_local_chat_t=int(_tm3.time())
-                        send_online_chat(player_nickname, online_chat_input.strip())
+                        import time as _tm3; _msg3=online_chat_input.strip()
+                        online_local_chat=_msg3; online_local_chat_t=int(_tm3.time())
+                        send_online_chat(player_nickname, _msg3)
+                        _online_chat.append({'nick':player_nickname,'text':_msg3,'t':int(_tm3.time())})
+                        _online_chat[:] = sorted(_online_chat,key=lambda x:x.get('t',0))[-8:]
                         online_chat_input=''; online_chat_ime=''
                         online_chat_active=False; pygame.key.stop_text_input()
                     elif event.key == pygame.K_ESCAPE:
@@ -6059,6 +6108,26 @@ def main():
                 elif DEV_MODE and event.key == pygame.K_t and not show_bag and not show_scroll and not show_aquarium and not show_intro:
                     show_dev_add = not show_dev_add; show_dev_reset = False
                     show_dev_reset = not show_dev_reset
+                elif chat_pinned and not show_online and event.key == pygame.K_RETURN and not pinned_chat_active:
+                    pinned_chat_active = True
+                    pygame.key.start_text_input()
+                elif pinned_chat_active:
+                    if event.key == pygame.K_RETURN and pinned_chat_input.strip():
+                        import time as _tm4; _msg4=pinned_chat_input.strip()
+                        online_local_chat = _msg4; online_local_chat_t = int(_tm4.time())
+                        send_online_chat(player_nickname, _msg4)
+                        _online_chat.append({'nick':player_nickname,'text':_msg4,'t':int(_tm4.time())})
+                        _online_chat[:] = sorted(_online_chat,key=lambda x:x.get('t',0))[-8:]
+                        _filtered_chat = [m for m in _online_chat if m.get('t',0) >= online_join_t]
+                        pinned_chat_input = ''; pinned_chat_ime = ''
+                        pinned_chat_active = False; pygame.key.stop_text_input()
+                    elif event.key == pygame.K_ESCAPE:
+                        pinned_chat_active = False; pinned_chat_input = ''; pygame.key.stop_text_input()
+                    elif event.key == pygame.K_BACKSPACE and not pinned_chat_ime:
+                        pinned_chat_input = pinned_chat_input[:-1]
+                    elif event.key == pygame.K_v and (event.mod & pygame.KMOD_CTRL):
+                        _cv = get_clipboard_text()
+                        if _cv: pinned_chat_input = (pinned_chat_input + _cv.strip())[:40]
                 elif event.key == pygame.K_ESCAPE:
                     if show_quit_confirm: show_quit_confirm = False
                     elif inv_detail is not None: inv_detail = None
@@ -6086,11 +6155,14 @@ def main():
                     status_input += event.text; status_ime = ''
                 elif online_chat_active and len(online_chat_input) < 40:
                     online_chat_input += event.text; online_chat_ime = ''
+                elif pinned_chat_active and len(pinned_chat_input) < 40:
+                    pinned_chat_input += event.text; pinned_chat_ime = ''
                 elif show_nickname_input and len(nickname_text) < 12:
                     nickname_text += event.text; ime_composition = ''
             elif event.type == pygame.TEXTEDITING:
                 if show_status_input: status_ime = event.text
                 elif online_chat_active: online_chat_ime = event.text
+                elif pinned_chat_active: pinned_chat_ime = event.text
                 elif show_nickname_input: ime_composition = event.text
             elif event.type == pygame.MOUSEWHEEL:
                 if aquarium_adding:
@@ -6127,10 +6199,19 @@ def main():
                 mx, my = event.pos
 
                 if event.button == 1:
+                    _click_handled = False
+                    if chat_pinned and not show_online:
+                        if PINNED_INPUT_RECT.collidepoint(mx, my):
+                            pinned_chat_active = True
+                            pygame.key.start_text_input()
+                        else:
+                            if pinned_chat_active:
+                                pinned_chat_active = False
+                                pygame.key.stop_text_input()
                     if show_online:
                         # 나가기 버튼
                         if pygame.Rect(OW-58,4,52,22).collidepoint(mx,my):
-                            show_online=False; stop_sse_stream(); remove_online_player(player_nickname); stab_anim=None; blood_particles=[]
+                            show_online=False; stop_sse_stream(); remove_online_player(player_nickname); stab_anim=None; blood_particles=[]; _click_handled=True
                         # 찌르기 버튼 클릭
                         elif stab_btn_rect and stab_btn_rect.collidepoint(mx,my):
                             if online_selected and online_selected in _online_players:
@@ -6155,6 +6236,10 @@ def main():
                                 if show_status_input:
                                     status_input = ''; status_ime = ''
                                     pygame.key.start_text_input()
+                        # 압정 아이콘 (채팅 고정)
+                        elif pygame.Rect(8, OH_PLAY-30, 20, 28).collidepoint(mx,my):
+                            chat_pinned = not chat_pinned
+                            play_ui_click()
                         # 휠 아이콘
                         elif pygame.Rect(OW-32,OH_PLAY-32,24,24).collidepoint(mx,my):
                             online_interact_open = not online_interact_open
@@ -6543,7 +6628,7 @@ def main():
                             context = None
                         else:
                             context = None
-                    elif BAG_RECT.collidepoint(mx, my):
+                    elif BAG_RECT.collidepoint(mx, my) and not show_online and not _click_handled:
                         play_ui_click()
                         show_bag = True; has_new = False; show_scroll = False
                         context = None; inv_page = 0; inv_detail = None
@@ -6571,8 +6656,10 @@ def main():
                                 'cur_x': float(OW//2+60), 'cur_y': float(OH_PLAY//2-40),
                                 'nickname': '테스트NPC', 'last_seen': 0
                             }
-                        _online_chat.clear()
-                        import time as _ojt; online_join_t = int(_ojt.time())
+                        import time as _ojt
+                        _now_t = int(_ojt.time())
+                        # 이번 세션에서 보낸 메시지가 있으면 그 중 가장 오래된 것 기준
+                        online_join_t = min([m.get('t', _now_t) for m in _online_chat] + [_now_t])
                         start_sse_stream(player_nickname)
                         fetch_online_bg(player_nickname)
                         show_bag=False; show_scroll=False; show_aquarium=False
@@ -6795,7 +6882,7 @@ def main():
                               online_push_anim_t, online_push_dir,
                               equipped_item, online_self_pushed,
                               online_status_msg, show_status_input, status_input, status_ime,
-                              call_selected)
+                              call_selected, chat_pinned)
             # 찌르기 애니메이션
             if stab_anim:
                 _sa=stab_anim
@@ -6829,6 +6916,9 @@ def main():
                     screen.blit(_fs,(int(_fp[0])-_fr-1,int(_fp[1])-_fr-1))
                     new_fx.append(_fp)
             online_fx_particles=new_fx
+        if chat_pinned and not show_online:
+            draw_pinned_chat_overlay(screen, _filtered_chat, player_nickname,
+                                     pinned_chat_input, pinned_chat_active, pinned_chat_ime)
         if show_settings:
             draw_settings_screen(screen, bgm_vol, sfx_vol, chat_vol)
         if show_ranking:
