@@ -4547,7 +4547,6 @@ class Jellyfish:
                        if JELLY_GRADES.get(s,'common') != 'lock']
             weights = [GRADE_WEIGHTS.get(JELLY_GRADES.get(s,'common'),10) for s in slots]
             chosen  = random.choices(slots, weights=weights, k=1)[0]
-            chosen  = 28  # TEST: 아기 해파리만 스폰
             self.design_idx = chosen
             if   chosen == 0:  base_idx = 0
             elif chosen == 1:  base_idx = 1
