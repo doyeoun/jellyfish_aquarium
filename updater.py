@@ -47,7 +47,8 @@ if __name__ == '__main__':
     py_dir  = os.path.dirname(os.path.abspath(__file__))
     # 배포 패키지: python\ 서브폴더 / 개발환경: 시스템 pythonw
     candidates = [
-        os.path.join(py_dir, 'python', 'pythonw.exe'),
+        os.path.join(py_dir, 'python', 'pythonw.exe'), # 배포판 (python 서브폴더)
+        os.path.join(py_dir, 'pythonw.exe'),            # 루트
         os.path.join(py_dir, 'python', 'python.exe'),
         r'C:\Users\dorong\Downloads\Reperence-Viewer-main\python\pythonw.exe',
         sys.executable.replace('python.exe', 'pythonw.exe'),

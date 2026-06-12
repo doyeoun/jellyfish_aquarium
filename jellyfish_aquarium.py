@@ -8,7 +8,7 @@ import threading
 import urllib.request as _url_req
 import webbrowser
 
-VERSION = '3.4.3'
+VERSION = '3.4.4'
 _latest_ver  = None   # None=확인중, ''=최신, 버전문자열=업데이트있음
 _release_url  = ''
 _download_url = ''   # exe 직접 다운로드 URL
@@ -24,7 +24,11 @@ def _fetch_update():
             data = json.loads(r.read())
         tag = data.get('tag_name', '').lstrip('v').lstrip('.')
         _release_url = data.get('html_url', '')
-        _latest_ver  = tag if tag and tag != VERSION else ''
+        # 릴리즈 버전이 현재보다 높을 때만 배너 표시
+        def _ver_tuple(v):
+            try: return tuple(int(x) for x in v.split('.'))
+            except: return (0,)
+        _latest_ver = tag if tag and _ver_tuple(tag) > _ver_tuple(VERSION) else ''
         for asset in data.get('assets', []):
             if asset.get('name','').endswith('.exe'):
                 _download_url = asset.get('browser_download_url',''); break
