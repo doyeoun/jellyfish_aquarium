@@ -1718,6 +1718,12 @@ WARDROBE_ITEM_DEFS = [
     ('elec_spark',    '스파크'),
     ('baby',          '아기'),
     ('banana_peel',   '바나나 껍질'),
+    ('snowflake',     '눈꽃'),
+    ('rainbow_halo',  '무지개'),
+    ('cat_ears_item', '고양이 귀'),
+    ('apple',         '사과'),
+    ('sunglasses',    '썬글라스'),
+    ('butterfly',     '나비'),
 ]
 # 특정 해파리만 드랍 가능 (design_idx → item_id 목록). 없으면 공용 드랍
 WARDROBE_DROP_MAP = {
@@ -1735,9 +1741,12 @@ WARDROBE_DROP_MAP = {
     26: ['blossom_pin'],       # 벚꽃 해파리
     8:  ['angel_halo'],        # 천사 해파리
     4:  ['elec_spark'],        # 전기 해파리
+    7:  ['snowflake'],         # 얼어붙은 해파리
+    22: ['rainbow_halo'],     # 무지개 해파리
+    5:  ['cat_ears_item'],    # 고양이 해파리
     28: ['baby'],              # 아기 해파리
 }
-WARDROBE_COMMON_DROPS = ['redcap', 'headset', 'banana_peel']
+WARDROBE_COMMON_DROPS = ['redcap', 'headset', 'banana_peel', 'apple', 'sunglasses', 'butterfly']
 DEV_RESET_BACK   = pygame.Rect(15, 12, 75, 28)
 
 def draw_bag_icon(surf, rect, has_new):
@@ -2111,6 +2120,46 @@ def draw_wardrobe_item_icon(surf, cx, cy, item_id, unlocked=True):
         pygame.draw.circle(surf, dc, (cx,cy-9), 6)
         pygame.draw.circle(surf, dg, (cx-1,cy-11), 3)
         pygame.draw.circle(surf, c((220,255,242),(60,80,110)), (cx-2,cy-11), 1)
+    elif item_id == 'butterfly':
+        yw = c((255,220,30),(70,85,110)); yd = c((200,160,10),(55,68,95)); bk = c((20,15,5),(35,45,70))
+        sz = 8
+        # 위 날개 (좌·우)
+        pygame.draw.ellipse(surf, yw, (cx-sz,  cy-sz,   sz,   sz))
+        pygame.draw.ellipse(surf, yw, (cx,      cy-sz,   sz,   sz))
+        # 아래 날개 (작게)
+        pygame.draw.ellipse(surf, yd, (cx-sz+2, cy,      sz-2, int(sz*0.55)))
+        pygame.draw.ellipse(surf, yd, (cx+2,    cy,      sz-2, int(sz*0.55)))
+        # 몸통
+        pygame.draw.line(surf, bk, (cx, cy-sz+1), (cx, cy+int(sz*0.55)-1), 2)
+    elif item_id == 'sunglasses':
+        fc_sg = c((15,15,15),(40,50,80)); lc_sg = c((30,30,35),(50,60,90)); br_sg = c((80,50,20),(45,55,85))
+        # 프레임 (브릿지 + 테)
+        pygame.draw.circle(surf, fc_sg, (cx-6,cy), 6, 2)
+        pygame.draw.circle(surf, fc_sg, (cx+6,cy), 6, 2)
+        pygame.draw.line(surf, fc_sg, (cx-1,cy),(cx+1,cy), 1)
+        pygame.draw.line(surf, br_sg, (cx-12,cy-1),(cx-12,cy+3), 1)
+        pygame.draw.line(surf, br_sg, (cx+12,cy-1),(cx+12,cy+3), 1)
+        # 렌즈 채우기 (어둡게)
+        pygame.draw.circle(surf, lc_sg, (cx-6,cy), 5)
+        pygame.draw.circle(surf, lc_sg, (cx+6,cy), 5)
+        # 렌즈 광택
+        pygame.draw.circle(surf, c((80,80,90),(50,58,80)), (cx-8,cy-2), 1)
+        pygame.draw.circle(surf, c((80,80,90),(50,58,80)), (cx+4,cy-2), 1)
+    elif item_id == 'apple':
+        # 사과 몸통
+        ar = 8
+        pygame.draw.circle(surf, c((180,20,20),(55,60,90)), (cx,cy+1), ar+1)
+        pygame.draw.circle(surf, c((220,40,35),(65,70,100)), (cx,cy+1), ar)
+        pygame.draw.circle(surf, c((255,100,90),(75,80,110)), (cx-2,cy-2), max(2,ar//3))
+        # 꼭지
+        pygame.draw.line(surf, c((60,120,20),(35,55,70)), (cx,cy-ar+1),(cx+1,cy-ar-4), 2)
+        # 잎
+        pygame.draw.ellipse(surf, c((60,160,40),(40,65,80)), (cx+1,cy-ar-4,6,4))
+    elif item_id == 'cat_ears_item':
+        cw_i = 26; ch_i = max(1, int(cw_i*4//10))
+        cs_i = pygame.transform.scale(CAT_EARS_BASE, (cw_i, ch_i))
+        if not unlocked: cs_i.set_alpha(80)
+        surf.blit(cs_i, (cx-cw_i//2, cy-ch_i-2))
     elif item_id == 'rabbit_ears':
         ec = c((28,20,28),(50,60,90)); ic = c((255,172,192),(65,75,110))
         for ex in (cx-6, cx+6):
@@ -2135,17 +2184,14 @@ def draw_wardrobe_item_icon(surf, cx, cy, item_id, unlocked=True):
             pygame.draw.circle(surf, fl2, (ex2,cy-9), 3)
             pygame.draw.circle(surf, (15,15,25) if unlocked else (40,50,70), (ex2,cy-9), 1)
     elif item_id == 'foxfire':
-        ft2 = pygame.time.get_ticks()*0.001
         for fi in range(3):
-            fa = ft2*0.9 + fi*(math.pi*2/3)
+            fa = fi*(math.pi*2/3)
             fx2 = cx + int(math.cos(fa)*9); fy2 = cy + int(math.sin(fa)*6)
-            fr2 = int(2+abs(math.sin(ft2*3+fi))*2)
-            frc = int(175+abs(math.sin(ft2*2+fi))*80)
-            fgc = int(8+abs(math.sin(ft2*2+fi))*28)
-            gs3 = pygame.Surface((fr2*4+2,fr2*4+2),pygame.SRCALPHA)
-            pygame.draw.circle(gs3,(frc,fgc,5,50),(fr2*2+1,fr2*2+1),fr2*2)
-            surf.blit(gs3,(fx2-fr2*2-1,fy2-fr2*2-1))
-            pygame.draw.circle(surf,c((frc,fgc,5),(50,60,90)),(fx2,fy2),max(1,fr2))
+            frc = c((220,40,5),(50,60,90))
+            gs3 = pygame.Surface((14,14),pygame.SRCALPHA)
+            pygame.draw.circle(gs3,(*frc,50),(7,7),6)
+            surf.blit(gs3,(fx2-7,fy2-7))
+            pygame.draw.circle(surf,frc,(fx2,fy2),3)
     elif item_id == 'blossom_pin':
         def _blossom(sx,sy,sr,col_p,col_c):
             for _bi in range(5):
@@ -2210,6 +2256,37 @@ def draw_wardrobe_item_icon(surf, cx, cy, item_id, unlocked=True):
         pygame.draw.line(surf,ol,(cx,iy-2),(cx+1,iy-6),2)
         pygame.draw.line(surf,sc,(cx,iy-2),(cx+1,iy-5),1)
         pygame.draw.circle(surf,c((55,110,25),(35,55,75)),(cx+1,iy-5),1)
+    elif item_id == 'rainbow_halo':
+        _n_ri = len(RAINBOW_HUES)
+        # 후광 (고정)
+        for _i in range(4):
+            _hue = RAINBOW_HUES[_i % _n_ri]
+            _rw = 8+_i*3; _rh = 5+_i*2
+            _ga = (32-_i*7) if unlocked else (14-_i*3)
+            _gs_i = pygame.Surface((_rw*2+4,_rh*2+4),pygame.SRCALPHA)
+            pygame.draw.ellipse(_gs_i,(*(_hue if unlocked else (60,70,100)),_ga),(2,2,_rw*2,_rh*2))
+            surf.blit(_gs_i,(cx-_rw-2,cy-_rh-2))
+        # 무지개 아크 1개 (중앙)
+        _ax = cx; _ay = cy
+        for _j,_hr in enumerate(RAINBOW_HUES[:7]):
+            _rw2 = 18-_j*2; _rh2 = max(4,int(_rw2*0.55))
+            if _rw2<5: continue
+            _col_i = _hr if unlocked else (60,70,100)
+            _gs_a = pygame.Surface((_rw2*2+4,_rh2*2+4),pygame.SRCALPHA)
+            pygame.draw.arc(_gs_a,(*_col_i,220),(2,2,_rw2*2,_rh2*2),0,math.pi,2)
+            surf.blit(_gs_a,(_ax-_rw2-2,_ay-_rh2-2))
+    elif item_id == 'snowflake':
+        sc2 = c((210,240,255),(65,80,110)); sc3 = c((180,220,245),(55,70,100))
+        def _sf_icon(ox, oy, s):
+            pygame.draw.line(surf, sc2, (cx+ox-s,cy+oy),(cx+ox+s,cy+oy), 1)
+            pygame.draw.line(surf, sc2, (cx+ox,cy+oy-s),(cx+ox,cy+oy+s), 1)
+            d = max(1, s//2)
+            pygame.draw.line(surf, sc3, (cx+ox-d,cy+oy-d),(cx+ox+d,cy+oy+d), 1)
+            pygame.draw.line(surf, sc3, (cx+ox+d,cy+oy-d),(cx+ox-d,cy+oy+d), 1)
+        _sf_icon(0, 0, 8)       # 중앙 큰 눈꽃
+        _sf_icon(-9, -7, 3)     # 작은 눈꽃들
+        _sf_icon(9, -7, 3)
+        _sf_icon(0, 10, 3)
     elif item_id == 'baby':
         # 큰 해파리(우) + 작은 해파리(좌) — PLAYER_BELL_SPRITE 축소
         main_w, main_h = 20, 15
@@ -2251,7 +2328,7 @@ def draw_wardrobe_icon(surf, rect, has_new=False):
         pygame.draw.circle(surf, (255,150,150), (x+w-3,y+3), 3)
 
 
-def draw_wardrobe_screen(surf, wardrobe_items, equipped_item=None, context_item=None):
+def draw_wardrobe_screen(surf, wardrobe_items, equipped_item=None, context_item=None, scroll_y=0):
     overlay = pygame.Surface((WIDTH,HEIGHT),pygame.SRCALPHA)
     overlay.fill((4,12,35,248))
     surf.blit(overlay,(0,0))
@@ -2265,9 +2342,14 @@ def draw_wardrobe_screen(surf, wardrobe_items, equipped_item=None, context_item=
     cw,ch = 82,80; cols = 4; gap = 6
     total_w = cols*(cw+gap)-gap
     sx = (WIDTH-total_w)//2; sy = 58
+    # 스크롤 클리핑
+    clip_top = 48; clip_bot = HEIGHT - 4
+    old_clip = surf.get_clip()
+    surf.set_clip(pygame.Rect(0, clip_top, WIDTH, clip_bot - clip_top))
     for i,(item_id,item_name) in enumerate(WARDROBE_ITEM_DEFS):
         ci = i%cols; ri = i//cols
-        ix = sx + ci*(cw+gap); iy = sy + ri*(ch+gap)
+        ix = sx + ci*(cw+gap); iy = sy + ri*(ch+gap) - scroll_y
+        if iy + ch < clip_top or iy > clip_bot: continue
         acquired = item_id in wardrobe_items
         is_eq = (item_id == equipped_item)
         slot=pygame.Surface((cw,ch),pygame.SRCALPHA)
@@ -2293,10 +2375,11 @@ def draw_wardrobe_screen(surf, wardrobe_items, equipped_item=None, context_item=
             surf.blit(tq,(ix+cw//2-tq.get_width()//2, iy+ch//2-tq.get_height()//2-4))
             fn2=get_font(10); tn2=fn2.render('???',True,(55,80,125))
             surf.blit(tn2,(ix+cw//2-tn2.get_width()//2, iy+ch-17))
+    surf.set_clip(old_clip)
     # 우클릭 팝업
     if context_item and context_item in wardrobe_items:
         ci2 = next((j for j,(iid,_) in enumerate(WARDROBE_ITEM_DEFS) if iid==context_item), 0)
-        px3 = sx + (ci2%cols)*(cw+gap); py3 = sy + (ci2//cols)*(ch+gap)
+        px3 = sx + (ci2%cols)*(cw+gap); py3 = sy + (ci2//cols)*(ch+gap) - scroll_y
         pw,ph = 80,32; pop_x=min(px3+cw+4, WIDTH-pw-4); pop_y=max(py3,4)
         pop_s=pygame.Surface((pw,ph),pygame.SRCALPHA); pop_s.fill((18,42,95,240))
         is_eq2 = (context_item==equipped_item)
@@ -2652,7 +2735,7 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
         else:
             surf.blit(spr2,(px2-sp_sz//2,py2-sp_h//2))
             _draw_online_tentacles(surf,px2,py2,sp_sz,sp_h,t_phase,False)
-        _p_nick_extra={'hat':12,'deep_orb':16,'rabbit_ears':8,'frog_hat_item':8,'cherry_top':10,'angel_halo':10,'banana_peel':10}.get(data.get('equipped','') or '',0)
+        _p_nick_extra={'hat':12,'deep_orb':16,'rabbit_ears':8,'frog_hat_item':8,'cherry_top':10,'angel_halo':10,'banana_peel':10,'apple':14,'cat_ears_item':7}.get(data.get('equipped','') or '',0)
         fn2=get_font(10,bold=True); nt2=fn2.render(data.get('nickname',nick),True,(255,255,255))
         surf.blit(nt2,(px2-nt2.get_width()//2,py2-sp_h//2-14-_p_nick_extra))
         _p_status = data.get('status_msg','')
@@ -2721,7 +2804,7 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
         surf.blit(spr_l,(int(lx)-sp_sz//2,int(ly)-sp_h//2))
         is_moving = any(online_keys.values()) if 'online_keys' in dir() else False
         _draw_online_tentacles(surf,int(lx),int(ly),sp_sz,sp_h,move_phase,is_moving)
-    _nick_extra = {'hat':12,'deep_orb':16,'rabbit_ears':8,'frog_hat_item':8,'cherry_top':10,'angel_halo':10,'banana_peel':10}.get(equipped_item or '',0)
+    _nick_extra = {'hat':12,'deep_orb':16,'rabbit_ears':8,'frog_hat_item':8,'cherry_top':10,'angel_halo':10,'banana_peel':10,'apple':14,'cat_ears_item':7}.get(equipped_item or '',0)
     fn_l=get_font(10,bold=True); nt_l=fn_l.render(lnick,True,(255,240,140))
     _nick_y = int(ly)-sp_h//2-14-_nick_extra
     surf.blit(nt_l,(int(lx)-nt_l.get_width()//2, _nick_y))
@@ -2904,6 +2987,74 @@ def draw_player_item(surf, cx, cy, bw, bh, item_id):
         _aw = _rx + ec_w//2 - (_lx + ec_w//2)
         _ax = _lx + ec_w//2
         pygame.draw.arc(surf, _bk, (_ax, hy3-8, _aw, 14), 0, math.pi, 2)
+    elif item_id == 'butterfly':
+        _t_bf = pygame.time.get_ticks() * 0.001
+
+        def _draw_bf(bfx, bfy, alp, phase):
+            _flap = abs(math.sin(_t_bf * 9.0 + phase))
+            _ws   = max(4, int(bw * 0.16)); _ww = max(1, int(_ws * _flap))
+            _a1   = int(220 * alp); _a2 = int(180 * alp)
+            _yw   = (255,220,30,_a1); _yd = (200,160,10,_a2)
+            _gl = pygame.Surface((_ww+2,_ws+2),pygame.SRCALPHA)
+            pygame.draw.ellipse(_gl,_yw,(0,0,_ww+1,_ws+1)); surf.blit(_gl,(bfx-_ww-1,bfy-_ws))
+            _gr = pygame.Surface((_ww+2,_ws+2),pygame.SRCALPHA)
+            pygame.draw.ellipse(_gr,_yw,(0,0,_ww+1,_ws+1)); surf.blit(_gr,(bfx+1,bfy-_ws))
+            _sh = max(1,int(_ws*0.55)); _sw = max(1,int(_ww*0.8))
+            _gbl = pygame.Surface((_sw+2,_sh+2),pygame.SRCALPHA)
+            pygame.draw.ellipse(_gbl,_yd,(0,0,_sw+1,_sh+1)); surf.blit(_gbl,(bfx-_sw-1,bfy))
+            _gbr = pygame.Surface((_sw+2,_sh+2),pygame.SRCALPHA)
+            pygame.draw.ellipse(_gbr,_yd,(0,0,_sw+1,_sh+1)); surf.blit(_gbr,(bfx+1,bfy))
+            pygame.draw.line(surf,(20,15,5),(bfx,bfy-_ws+1),(bfx,bfy+_sh-1),1)
+
+        # ── 공전 나비 2마리 (페이드 포함) ───────────────────────
+        _cyc = 4.0
+        for _bi in range(2):
+            _lt  = ((_t_bf + _bi * _cyc * 0.5) % _cyc) / _cyc
+            _alp = (_lt/0.18 if _lt<0.18 else (1.0-_lt)/0.22 if _lt>0.78 else 1.0)
+            if _alp <= 0.02: continue
+            _ang = _t_bf * 1.1 + _bi * math.pi
+            _bx  = cx + int(math.cos(_ang) * bw * 0.72)
+            _by  = cy + int(math.sin(_ang) * bh * 0.36) + int(math.sin(_t_bf*2.5+_bi)*4)
+            _draw_bf(_bx, _by, _alp, _bi * 1.5)
+
+        # ── 스폰/소멸 나비 1마리 ─────────────────────────────────
+        _cyc3 = 3.8
+        _tc3  = _t_bf % _cyc3; _cn3 = int(_t_bf / _cyc3); _lt3 = _tc3 / _cyc3
+        _alp3 = (_lt3/0.15 if _lt3<0.15 else (1.0-_lt3)/0.20 if _lt3>0.80 else 1.0)
+        if _alp3 > 0.02:
+            _sa3 = (_cn3 * 2.39 + 5.1) % (math.pi*2)
+            _sr3 = bw * (0.35 + (_cn3 * 0.61 % 1) * 0.35)
+            _ma3 = (_cn3 * 1.73 + 4.2) % (math.pi*2)
+            _bx3 = int(cx + math.cos(_sa3)*_sr3 + math.cos(_ma3)*bw*0.55*_lt3)
+            _by3 = int(cy + math.sin(_sa3)*_sr3*0.65 + math.sin(_ma3)*bh*0.45*_lt3 - bh*0.12*_lt3)
+            _draw_bf(_bx3, _by3, _alp3, 3.0)
+    elif item_id == 'sunglasses':
+        gy = cy + bh//8 + 3
+        # 렌즈 채우기
+        pygame.draw.circle(surf, (20,20,25), (cx-7,gy), 7)
+        pygame.draw.circle(surf, (20,20,25), (cx+7,gy), 7)
+        # 프레임
+        pygame.draw.circle(surf, (10,10,12), (cx-7,gy), 7, 2)
+        pygame.draw.circle(surf, (10,10,12), (cx+7,gy), 7, 2)
+        pygame.draw.line(surf, (10,10,12), (cx-1,gy),(cx+1,gy), 1)
+        pygame.draw.line(surf, (60,40,15), (cx-14,gy-1),(cx-14,gy+3), 2)
+        pygame.draw.line(surf, (60,40,15), (cx+14,gy-1),(cx+14,gy+3), 2)
+        # 광택
+        pygame.draw.circle(surf, (55,55,65), (cx-9,gy-2), 2)
+        pygame.draw.circle(surf, (55,55,65), (cx+5,gy-2), 2)
+    elif item_id == 'apple':
+        hy_a = cy - bh//2
+        ar2 = max(7, bw//5)
+        ay_a = hy_a + ar2//2
+        pygame.draw.circle(surf, (180,20,20), (cx, ay_a-ar2+1), ar2+1)
+        pygame.draw.circle(surf, (220,40,35), (cx, ay_a-ar2+1), ar2)
+        pygame.draw.circle(surf, (255,100,90), (cx-ar2//3, ay_a-ar2*4//3), max(2,ar2//3))
+        pygame.draw.line(surf, (60,120,20), (cx, ay_a-ar2*2+2), (cx+1, ay_a-ar2*2-4), 2)
+        pygame.draw.ellipse(surf, (60,160,40), (cx+1, ay_a-ar2*2-4, max(5,ar2//2+2), max(3,ar2//3+1)))
+    elif item_id == 'cat_ears_item':
+        cew = int(bw*0.82); ceh = max(1, int(cew*4//10))
+        ces = pygame.transform.scale(CAT_EARS_BASE, (cew, ceh))
+        surf.blit(ces, (cx-cew//2, cy-bh//2-ceh+ceh//2))
     elif item_id == 'rabbit_ears':
         rew = int(bw*0.55); reh = max(1, int(rew*6//8))
         res = pygame.transform.scale(RABBIT_EARS_BASE, (rew, reh))
@@ -3034,6 +3185,65 @@ def draw_player_item(surf, cx, cy, bw, bh, item_id):
         pygame.draw.line(surf, ol, (cx,hy-br), (cx+2, hy-br-sh-1), max(2,bw//12)+1)
         pygame.draw.line(surf, sc,  (cx,hy-br), (cx+2, hy-br-sh),   max(2,bw//12))
         pygame.draw.circle(surf, (55,110,25), (cx+2, hy-br-sh), max(2,bw//14))
+    elif item_id == 'rainbow_halo':
+        # 무지개 후광 (rotating ellipse glow)
+        _t_rb = pygame.time.get_ticks() * 0.001
+        _pg   = 0.55 + abs(math.sin(_t_rb * 2.0)) * 0.45
+        _n_rb = len(RAINBOW_HUES)
+        for _i in range(5):
+            _hue = RAINBOW_HUES[(_i + int(_t_rb * 2)) % _n_rb]
+            _grw = int(bw * (1.0 + (_i+1) * 0.15 * _pg))
+            _grh = int(bh * (1.0 + (_i+1) * 0.12 * _pg))
+            _ga  = int(24 * _pg * (5-_i) // 5)
+            _gs  = pygame.Surface((_grw+4, _grh+4), pygame.SRCALPHA)
+            pygame.draw.ellipse(_gs, (*_hue, _ga), (2, 2, _grw, _grh))
+            surf.blit(_gs, (cx-_grw//2-2, cy-_grh//2-2))
+        # 무지개 아크 3개
+        for _i in range(3):
+            _ph   = _t_rb * 0.4 + _i * math.pi * 0.67
+            _ax   = cx + int(math.cos(_ph) * bw * 0.55)
+            _ay   = cy + int(math.sin(_ph) * bh * 0.45)
+            _at   = (_t_rb * 0.7 + _i * 0.5) % 1.0
+            _alpt = (_at/0.18 if _at<0.18 else (1.0-_at)/0.28 if _at>0.72 else 1.0)
+            _ba   = int(_alpt * 120)
+            if _ba < 4: continue
+            _rwm  = int(bw * 0.32)
+            for _j, _hr in enumerate(RAINBOW_HUES[:7]):
+                _rw = _rwm - _j * max(1, int(bw * 0.030))
+                _rh = max(3, int(_rw * 0.52))
+                if _rw < 5: continue
+                _a2 = int(_ba * (1.0 - _j * 0.04))
+                _gs2 = pygame.Surface((_rw*2+4, _rh*2+4), pygame.SRCALPHA)
+                pygame.draw.arc(_gs2, (*_hr, _a2), (2, 2, _rw*2, _rh*2), 0, math.pi, 2)
+                surf.blit(_gs2, (_ax-_rw-2, _ay-_rh-2))
+    elif item_id == 'snowflake':
+        # 얼어붙은 해파리처럼: 주변에서 생성 → 위로 흩날리며 페이드아웃
+        _t_sf  = pygame.time.get_ticks() * 0.001
+        _N     = 14
+        _per   = 2.8   # 파티클 하나의 수명(초)
+        for _i in range(_N):
+            _age  = (_t_sf + _i * (_per / _N)) % _per
+            _life = 1.0 - _age / _per
+            if _life <= 0.05: continue
+            # 탄생 위치 (몸 주변 랜덤 각도 — 인덱스로 고정)
+            _ang  = _i * 2.399          # 황금각으로 고르게 분포
+            _dr   = bw * (0.28 + (_i % 4) * 0.08)
+            _bx   = cx + math.cos(_ang) * _dr
+            _by   = cy + math.sin(_ang) * _dr * 0.7
+            # 이동: 바깥으로 + 위로 흩날림
+            _px   = _bx + math.cos(_ang) * _age * 14
+            _py   = _by + math.sin(_ang) * _age * 10
+            _a    = int(_life * 215)
+            _sz   = max(2, 3 + _i % 3)
+            _col  = (210, 240, 255, _a)
+            _ss   = pygame.Surface((_sz*2+2, _sz*2+2), pygame.SRCALPHA)
+            _c2   = _sz + 1
+            pygame.draw.line(_ss, _col, (_c2-_sz,_c2), (_c2+_sz,_c2), 1)
+            pygame.draw.line(_ss, _col, (_c2,_c2-_sz), (_c2,_c2+_sz), 1)
+            _d    = max(1, _sz//2)
+            pygame.draw.line(_ss, (*_col[:3], int(_a*0.7)), (_c2-_d,_c2-_d),(_c2+_d,_c2+_d), 1)
+            pygame.draw.line(_ss, (*_col[:3], int(_a*0.7)), (_c2+_d,_c2-_d),(_c2-_d,_c2+_d), 1)
+            surf.blit(_ss, (int(_px)-_sz-1, int(_py)-_sz-1))
     elif item_id == 'baby':
         # 유저 해파리를 그대로 복제해 좌측 상단에 붙임
         _t   = pygame.time.get_ticks() * 0.001
@@ -3536,7 +3746,9 @@ def draw_cult_doc_list(surf, cult_docs):
                     else BABY_BELL_SPRITE  if result_slot==28
                     else BELL_SPRITES[bi])
             mspr = pygame.transform.scale(mspr, (34, 26))
-            surf.blit(mspr, (WIDTH-56, y+card_h//2-13))
+            _ms_x = WIDTH-56; _ms_y = y+card_h//2-13
+            surf.blit(mspr, (_ms_x, _ms_y))
+            _draw_slot_overlay(surf, result_slot, _ms_x+17, _ms_y+4, 34, 26)
 
         fc = get_font(15, bold=True)
         ct = fc.render(f'× {count}', True, (158, 255, 168))
@@ -3588,6 +3800,7 @@ def draw_doc_detail(surf, doc_type, inventory):
             spr = (RAINBOW_BELL_SPRITE if slot==22
                    else PABUN_BELL_SPRITE if slot==23
                    else TWIN_BELL_SPRITE  if slot==27
+                   else BABY_BELL_SPRITE  if slot==28
                    else BELL_SPRITES[bi])
             spr = pygame.transform.scale(spr, (sw, sh))
             if slot == 9:   spr.set_alpha(72)
@@ -3691,6 +3904,8 @@ def draw_gacha_screen(surf, slot, timer):
         cx2, cy2 = WIDTH//2, HEIGHT//2 - 18
         base_spr = (RAINBOW_BELL_SPRITE if slot==22
                     else PABUN_BELL_SPRITE if slot==23
+                    else TWIN_BELL_SPRITE  if slot==27
+                    else BABY_BELL_SPRITE  if slot==28
                     else BELL_SPRITES[_slot_base_idx(slot)])
         spr2 = pygame.transform.scale(base_spr, (sw2, sh2))
         surf.blit(spr2, (cx2-sw2//2, cy2-sh2//2))
@@ -5976,6 +6191,7 @@ def main():
     _wardrobe_cache['equipped'] = equipped_item
     wardrobe_context   = None   # right-clicked item_id
     show_wardrobe      = False
+    wardrobe_scroll_y  = 0
     item_msg           = ''
     item_msg_timer     = 0
     acquire_msg        = ''
@@ -6177,6 +6393,11 @@ def main():
             elif event.type == pygame.MOUSEWHEEL:
                 if aquarium_adding:
                     aq_add_scroll = max(0, aq_add_scroll - event.y * 35)
+                elif show_wardrobe:
+                    cw_s,ch_s,cols_s,gap_s = 82,80,4,6
+                    rows_s = (len(WARDROBE_ITEM_DEFS)+cols_s-1)//cols_s
+                    max_scroll = max(0, rows_s*(ch_s+gap_s) - (HEIGHT-58-8))
+                    wardrobe_scroll_y = max(0, min(max_scroll, wardrobe_scroll_y - event.y*35))
             elif event.type == pygame.KEYUP:
                 if show_online:
                     if event.key in (pygame.K_w,pygame.K_UP):    online_keys['w']=False
@@ -6446,7 +6667,7 @@ def main():
                                 total_w_w = cols_w*(cw_w+gap_w)-gap_w
                                 sx_w = (WIDTH-total_w_w)//2; sy_w = 58
                                 px_w = sx_w+(ci_w%cols_w)*(cw_w+gap_w)
-                                py_w = sy_w+(ci_w//cols_w)*(ch_w+gap_w)
+                                py_w = sy_w+(ci_w//cols_w)*(ch_w+gap_w) - wardrobe_scroll_y
                                 pop_x_w = min(px_w+cw_w+4, WIDTH-84); pop_y_w = max(py_w,4)
                                 if pygame.Rect(pop_x_w,pop_y_w,80,32).collidepoint(mx,my):
                                     if equipped_item == wardrobe_context:
@@ -6705,7 +6926,7 @@ def main():
                         wardrobe_context = None
                         for j_r,(iid_r,_) in enumerate(WARDROBE_ITEM_DEFS):
                             if iid_r not in wardrobe_items: continue
-                            ix_r=sx_r+(j_r%cols_r)*(cw_r+gap_r); iy_r=sy_r+(j_r//cols_r)*(ch_r+gap_r)
+                            ix_r=sx_r+(j_r%cols_r)*(cw_r+gap_r); iy_r=sy_r+(j_r//cols_r)*(ch_r+gap_r)-wardrobe_scroll_y
                             if pygame.Rect(ix_r,iy_r,cw_r,ch_r).collidepoint(mx,my):
                                 wardrobe_context = iid_r; break
                     elif show_aquarium and not aquarium_adding:
@@ -6947,7 +7168,7 @@ def main():
             if aquarium_adding:
                 draw_aquarium_add_screen(screen, inventory, aq_add_scroll)
             elif show_wardrobe:
-                draw_wardrobe_screen(screen, wardrobe_items, equipped_item, wardrobe_context)
+                draw_wardrobe_screen(screen, wardrobe_items, equipped_item, wardrobe_context, wardrobe_scroll_y)
             else:
                 draw_aquarium_screen(screen, aquarium_fish_list)
                 # 유리병 스폰
