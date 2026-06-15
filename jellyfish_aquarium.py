@@ -7314,8 +7314,15 @@ def main():
             # 보간: cur_x/cur_y를 target x/y로 부드럽게 이동
             for _ok, _od in _online_players.items():
                 if _ok in online_pushed: continue
-                _od['cur_x'] = _od.get('cur_x', _od['x']) + (_od['x'] - _od.get('cur_x', _od['x'])) * 0.50
-                _od['cur_y'] = _od.get('cur_y', _od['y']) + (_od['y'] - _od.get('cur_y', _od['y'])) * 0.50
+                _cx = _od.get('cur_x', _od['x']); _cy = _od.get('cur_y', _od['y'])
+                _tx = _od['x'];                   _ty = _od['y']
+                _vx = _od.get('vx', 0);           _vy = _od.get('vy', 0)
+                # 속도 기반 예측 + 목표위치 보정 (부드러운 이동)
+                _od['cur_x'] = max(20, min(OW-20,   _cx + _vx * 0.45 + (_tx - _cx) * 0.12))
+                _od['cur_y'] = max(20, min(OH_PLAY-20, _cy + _vy * 0.45 + (_ty - _cy) * 0.12))
+                # 속도 감쇠 (오버슈트 방지)
+                _od['vx'] = _vx * 0.80
+                _od['vy'] = _vy * 0.80
                 # action_phase 로컬 전진 (끊김 방지)
                 if _od.get('action'):
                     _od['action_phase'] = _od.get('action_phase', 0.0) + 0.15
