@@ -526,6 +526,7 @@ W_PIX = 16
 DEV_MODE = False  # False = 정상 플레이 모드
 _dev_spawn_idx = None  # DEV: 강제 스폰 해파리 (None=랜덤)
 _bat_particles = []    # 악마 날개 착용 이동 파티클
+_online_prev_pos = {}  # 다른 플레이어 이전 위치 (박쥐 이펙트용)
 
 # ── 폰트 ──────────────────────────────────────────────────────
 _font_cache = {}
@@ -2849,6 +2850,12 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
         else:
             if data.get('equipped','') == 'demon_wings':
                 _draw_demon_wings(surf, px2, py2, sp_sz, sp_h, bright=True)
+                # 다른 유저 이동 감지 → 박쥐 스폰
+                prev = _online_prev_pos.get(nick)
+                if prev and (abs(px2-prev[0]) > 1 or abs(py2-prev[1]) > 1):
+                    if random.random() < 0.25:
+                        _spawn_bat(px2, py2)
+                _online_prev_pos[nick] = (px2, py2)
             surf.blit(spr2,(px2-sp_sz//2,py2-sp_h//2))
             _draw_online_tentacles(surf,px2,py2,sp_sz,sp_h,t_phase,False)
         _p_nick_extra={'hat':12,'deep_orb':16,'rabbit_ears':8,'frog_hat_item':8,'cherry_top':10,'angel_halo':10,'banana_peel':10,'apple':14,'cat_ears_item':7}.get(data.get('equipped','') or '',0)
