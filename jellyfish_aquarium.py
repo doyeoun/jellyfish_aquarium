@@ -232,25 +232,30 @@ try:
 except Exception:
     _fb_session = None
 
-def sync_online_pos(nick, x, y, action=None, action_phase=0.0, equipped_item=None, push_anim_t=0, push_dir=(0,0), status_msg=''):
+def sync_online_pos(nick, x, y, action=None, action_phase=0.0, equipped_item=None, push_anim_t=0, push_dir=(0,0), status_msg='', full=False):
     def _s():
         try:
             import urllib.parse as _up2, time as _tm
             safe = _up2.quote(nick, safe='')
             url  = FIREBASE_URL + f"online/{safe}.json"
-            payload = {"x":int(x),"y":int(y),"nickname":nick,"last_seen":int(_tm.time())}
-            if action: payload['action'] = action; payload['action_phase'] = round(action_phase, 2)
-            else:      payload['action'] = ''; payload['action_phase'] = 0.0
-            payload['equipped']   = equipped_item or ''
-            payload['status_msg'] = status_msg or ''
-            payload['push_start'] = round(_tm.time() - (18-push_anim_t)/60.0, 3) if push_anim_t > 0 else 0
-            payload['push_dir_x'] = round(push_dir[0], 2)
-            payload['push_dir_y'] = round(push_dir[1], 2)
+            if full:
+                # 전체 상태 동기화 (PATCH, 모든 필드)
+                payload = {"x":int(x),"y":int(y),"nickname":nick,"last_seen":int(_tm.time())}
+                if action: payload['action'] = action; payload['action_phase'] = round(action_phase, 2)
+                else:      payload['action'] = ''; payload['action_phase'] = 0.0
+                payload['equipped']   = equipped_item or ''
+                payload['status_msg'] = status_msg or ''
+                payload['push_start'] = round(_tm.time()-(18-push_anim_t)/60.0,3) if push_anim_t>0 else 0
+                payload['push_dir_x'] = round(push_dir[0], 2)
+                payload['push_dir_y'] = round(push_dir[1], 2)
+            else:
+                # 위치만 (PATCH, 최소 페이로드)
+                payload = {"x":int(x),"y":int(y),"last_seen":int(_tm.time())}
             if _fb_session:
-                _fb_session.put(url, json=payload, timeout=3)
+                _fb_session.patch(url, json=payload, timeout=3)  # PATCH로 변경
             else:
                 import urllib.request as _ur, json as _j
-                req = _ur.Request(url,_j.dumps(payload).encode(),'PUT',
+                req = _ur.Request(url,_j.dumps(payload).encode(),'PATCH',
                                   headers={'Content-Type':'application/json','User-Agent':'jellyfish-game'})
                 _ur.urlopen(req, timeout=3)
         except: pass
@@ -6414,6 +6419,7 @@ def main():
     online_chat_ime     = ''
     online_chat_active  = False
     online_sync_t       = 0
+    online_full_sync_t  = 0
     online_fetch_t      = 0
     online_move_phase    = 0.0
     online_local_chat    = ''
@@ -7302,11 +7308,16 @@ def main():
                 if equipped_item == 'demon_wings' and any(online_keys.values()) and not online_chat_active:
                     if random.random() < 0.25:
                         _spawn_bat(online_x, online_y)
-            # 위치 동기화
-            online_sync_t += 1
+            # 위치 동기화 (매 2프레임 위치만 / 매 2초 전체 상태)
+            online_sync_t += 1; online_full_sync_t += 1
             if online_sync_t >= 2:
                 online_sync_t = 0
-                sync_online_pos(player_nickname, online_x, online_y, online_action, online_action_phase, equipped_item, online_push_anim_t, online_push_dir, online_status_msg)
+                _full = (online_full_sync_t >= 120)
+                if _full: online_full_sync_t = 0
+                sync_online_pos(player_nickname, online_x, online_y,
+                                online_action, online_action_phase,
+                                equipped_item, online_push_anim_t, online_push_dir,
+                                online_status_msg, full=_full)
             online_fetch_t += 1
             if online_fetch_t >= 90:  # 채팅만 주기적으로 fetch
                 online_fetch_t = 0
