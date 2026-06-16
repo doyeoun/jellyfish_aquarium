@@ -6665,7 +6665,9 @@ def main():
                     elif show_aquarium:   show_aquarium = False
                     elif online_chat_active:         online_chat_active=False; pygame.key.stop_text_input()
                     elif show_online:
-                            show_online=False; stop_sse_stream(); remove_online_player(player_nickname); stab_anim=None; blood_particles=[]
+                            show_online=False
+                            if not chat_pinned: stop_sse_stream()
+                            remove_online_player(player_nickname); stab_anim=None; blood_particles=[]
                     elif show_settings:             show_settings = False; settings_dragging = None
                     elif show_ranking:              show_ranking = False
                     elif show_dev_reset:           show_dev_reset = False
@@ -6744,7 +6746,9 @@ def main():
                     if show_online:
                         # 나가기 버튼
                         if pygame.Rect(OW-58,4,52,22).collidepoint(mx,my):
-                            show_online=False; stop_sse_stream(); remove_online_player(player_nickname); stab_anim=None; blood_particles=[]; _click_handled=True
+                            show_online=False
+                            if not chat_pinned: stop_sse_stream()
+                            remove_online_player(player_nickname); stab_anim=None; blood_particles=[]; _click_handled=True
                         # 찌르기 버튼 클릭
                         elif stab_btn_rect and stab_btn_rect.collidepoint(mx,my):
                             if online_selected and online_selected in _online_players:
@@ -6772,6 +6776,9 @@ def main():
                         # 압정 아이콘 (채팅 고정)
                         elif pygame.Rect(8, OH_PLAY-30, 20, 28).collidepoint(mx,my):
                             chat_pinned = not chat_pinned
+                            # 고정 해제 + 온라인 월드 밖이면 SSE 중단
+                            if not chat_pinned and not show_online:
+                                stop_sse_stream()
                             play_ui_click()
                         # 휠 아이콘
                         elif pygame.Rect(OW-32,OH_PLAY-32,24,24).collidepoint(mx,my):
@@ -7488,6 +7495,9 @@ def main():
                     new_fx.append(_fp)
             online_fx_particles=new_fx
         if chat_pinned and not show_online:
+            # 인게임에서도 _online_chat 최신화 반영
+            if _online_chat:
+                _filtered_chat = [m for m in _online_chat if m.get('t',0) >= online_join_t]
             draw_pinned_chat_overlay(screen, _filtered_chat, player_nickname,
                                      pinned_chat_input, pinned_chat_active, pinned_chat_ime)
         if show_settings:
