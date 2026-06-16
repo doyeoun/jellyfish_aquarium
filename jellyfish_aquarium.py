@@ -6744,8 +6744,13 @@ def main():
                                 pinned_chat_active = False
                                 pygame.key.stop_text_input()
                     if show_online:
+                        # 설정창 열려있으면 먼저 닫기 처리
+                        if show_settings:
+                            if pygame.Rect(15,12,75,28).collidepoint(mx,my):
+                                show_settings = False
+                                save_game(inventory,_current_stage,cult_docs,aquarium,player_nickname,bgm_vol,sfx_vol)
                         # 나가기 버튼
-                        if pygame.Rect(OW-58,4,52,22).collidepoint(mx,my):
+                        elif pygame.Rect(OW-58,4,52,22).collidepoint(mx,my):
                             show_online=False
                             if not chat_pinned: stop_sse_stream()
                             remove_online_player(player_nickname); stab_anim=None; blood_particles=[]; _click_handled=True
@@ -7227,7 +7232,7 @@ def main():
                         start_sse_stream(player_nickname)
                         fetch_online_bg(player_nickname)
                         show_bag=False; show_scroll=False; show_aquarium=False
-                    elif SETTINGS_RECT.collidepoint(mx, my):
+                    elif SETTINGS_RECT.collidepoint(mx, my) and not show_online:
                         play_ui_click()
                         show_settings = True
                         show_bag=False; show_scroll=False; show_aquarium=False; context=None
