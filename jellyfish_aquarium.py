@@ -8,7 +8,7 @@ import threading
 import urllib.request as _url_req
 import webbrowser
 
-VERSION = '3.4.4'
+VERSION = '3.5.0'
 _latest_ver  = None   # None=확인중, ''=최신, 버전문자열=업데이트있음
 _release_url  = ''
 _download_url = ''   # exe 직접 다운로드 URL
@@ -523,7 +523,7 @@ if CTYPES_OK:
 clock = pygame.time.Clock()
 W_PIX = 16
 
-DEV_MODE = False  # False = 정상 플레이 모드
+DEV_MODE = True  # False = 정상 플레이 모드
 _dev_spawn_idx = None  # DEV: 강제 스폰 해파리 (None=랜덤)
 _bat_particles = []    # 악마 날개 착용 이동 파티클
 _online_prev_pos = {}  # 다른 플레이어 이전 위치 (박쥐 이펙트용)
