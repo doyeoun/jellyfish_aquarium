@@ -523,7 +523,7 @@ if CTYPES_OK:
 clock = pygame.time.Clock()
 W_PIX = 16
 
-DEV_MODE = True  # False = 정상 플레이 모드
+DEV_MODE = False  # False = 정상 플레이 모드
 _dev_spawn_idx = None  # DEV: 강제 스폰 해파리 (None=랜덤)
 _bat_particles = []    # 악마 날개 착용 이동 파티클
 _online_prev_pos = {}  # 다른 플레이어 이전 위치 (박쥐 이펙트용)
