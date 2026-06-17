@@ -420,12 +420,62 @@ def fetch_online_bg(nick_self):
         except: pass
     import threading as _t; _t.Thread(target=_f,daemon=True).start()
 
-def send_online_chat(nick, text, t=None):
+_pending_img_b64 = None   # 전송 대기 중인 이미지 base64
+_img_surface_cache = {}   # nick+t → pygame.Surface 캐시
+
+_img_dialog_result  = [None]   # 스레드 결과 저장
+_img_dialog_running = [False]
+_local_sent_img     = [None, 0]  # [b64, 전송시각] 로컬 말풍선용
+
+def _open_image_dialog_async():
+    """별도 스레드에서 파일 다이얼로그 실행."""
+    if _img_dialog_running[0]: return
+    _img_dialog_running[0] = True
+    _img_dialog_result[0] = None
+    def _run():
+        try:
+            import subprocess
+            from PIL import Image as _Im
+            import io as _io, base64 as _b64
+            ps_cmd = (
+                'Add-Type -AssemblyName System.Windows.Forms;'
+                '$f=New-Object System.Windows.Forms.OpenFileDialog;'
+                '$f.Title="이미지 선택";'
+                '$f.Filter="이미지|*.jpg;*.jpeg;*.png;*.gif;*.bmp";'
+                '$f.TopMost=$true;'
+                'if($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){Write-Output $f.FileName}'
+            )
+            r = subprocess.run(
+                ['powershell', '-NoProfile', '-WindowStyle', 'Hidden', '-Command', ps_cmd],
+                capture_output=True, text=True, timeout=120
+            )
+            path = r.stdout.strip()
+            if path:
+                img = _Im.open(path).convert('RGB')
+                img.thumbnail((100, 100), _Im.LANCZOS)
+                out = _io.BytesIO()
+                img.save(out, format='JPEG', quality=45)
+                _img_dialog_result[0] = _b64.b64encode(out.getvalue()).decode('utf-8')
+        except Exception: pass
+        finally: _img_dialog_running[0] = False
+    import threading as _th; _th.Thread(target=_run, daemon=True).start()
+
+def _b64_to_surface(b64):
+    """base64 → pygame.Surface (캐시)."""
+    try:
+        import base64 as _b64m, io as _io
+        buf = _io.BytesIO(_b64m.b64decode(b64))
+        return pygame.image.load(buf, 'img.jpg').convert()
+    except Exception: return None
+
+
+def send_online_chat(nick, text, t=None, img=None):
     import time as _tbase; _ts = t if t is not None else int(_tbase.time())
     def _sc():
         try:
             url = FIREBASE_URL + "ochat.json"
             payload = {"nick":nick,"text":text,"t":_ts}
+            if img: payload["img"] = img
             if _fb_session: _fb_session.post(url, json=payload, timeout=3)
             else:
                 import urllib.request as _ur, json as _j
@@ -2794,16 +2844,33 @@ def _draw_online_tentacles(surf, cx, cy, bw, bh, phase, moving):
         pygame.draw.circle(s,(*tc,180),(6+sway,length),max(2,length//6))
         surf.blit(s,(bx-6, cy+bh//2))
 
-def _draw_online_chat_bubble(surf, cx, top_y, text):
-    fc=get_font(10,bold=True); tw=fc.render(text,True,(30,30,50)); pad=6
-    bw2=min(tw.get_width()+pad*2,160); bh2=tw.get_height()+pad
+def _draw_online_chat_bubble(surf, cx, top_y, text, img_b64=None):
+    pad=6
+    img_surf = None
+    if img_b64:
+        import hashlib as _hl
+        key = _hl.md5(img_b64.encode()).hexdigest()
+        if key not in _img_surface_cache:
+            _img_surface_cache[key] = _b64_to_surface(img_b64)
+        img_surf = _img_surface_cache.get(key)
+        if img_surf:
+            iw = min(img_surf.get_width(), 90)
+            ih = int(img_surf.get_height() * iw / img_surf.get_width())
+            img_surf = pygame.transform.scale(img_surf, (iw, ih))
+    fc=get_font(10,bold=True)
+    if img_surf:
+        bw2=img_surf.get_width()+pad*2; bh2=img_surf.get_height()+pad
+    else:
+        tw=fc.render(text,True,(30,30,50)); bw2=min(tw.get_width()+pad*2,160); bh2=tw.get_height()+pad
     bx2=max(2,min(OW-bw2-2,cx-bw2//2)); by2=top_y-bh2-8
     bs=pygame.Surface((bw2,bh2+6),pygame.SRCALPHA)
     pygame.draw.rect(bs,(255,255,255,230),(0,0,bw2,bh2),border_radius=7)
     pygame.draw.rect(bs,(180,220,180,180),(0,0,bw2,bh2),1,border_radius=7)
     tip=min(max(bw2//2,8),bw2-8)
     pygame.draw.polygon(bs,(255,255,255,230),[(tip-4,bh2),(tip+4,bh2),(tip,bh2+6)])
-    surf.blit(bs,(bx2,by2)); surf.blit(tw,(bx2+pad,by2+pad//2))
+    surf.blit(bs,(bx2,by2))
+    if img_surf: surf.blit(img_surf,(bx2+pad,by2+pad//2))
+    else: surf.blit(fc.render(text,True,(30,30,50)),(bx2+pad,by2+pad//2))
 
 
 def _draw_status_bubble(surf, cx, top_y, text):
@@ -2832,7 +2899,9 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
 
     def _nick_chat(nick):
         msgs = [m for m in chat_msgs if m.get('nick')==nick and now2-m.get('t',0)<10]
-        return msgs[-1].get('text','') if msgs else ''
+        if not msgs: return '', None
+        m = msgs[-1]
+        return m.get('text',''), m.get('img', None)
 
     moving = move_phase  # non-zero when moving
     if pushed is None: pushed = {}
@@ -2861,10 +2930,10 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
         surf.blit(nt2,(px2-nt2.get_width()//2,py2-sp_h//2-14-_p_nick_extra))
         _p_status = data.get('status_msg','')
         _p_bubble_y = py2-sp_h//2-14-_p_nick_extra
-        chat_t = _nick_chat(nick)
-        if chat_t:
-            _draw_online_chat_bubble(surf,px2,_p_bubble_y,chat_t)
-            _p_bubble_y -= (get_font(10,bold=True).size(chat_t)[1]+8)
+        chat_t, chat_img = _nick_chat(nick)
+        if chat_t or chat_img:
+            _draw_online_chat_bubble(surf,px2,_p_bubble_y,chat_t,chat_img)
+            _p_bubble_y -= (get_font(10,bold=True).size(chat_t or ' ')[1]+8)
         if _p_status:
             _draw_status_bubble(surf,px2,_p_bubble_y,_p_status)
         # 다른 플레이어 착용 아이템
@@ -2934,9 +3003,10 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
     draw_player_item(surf, int(lx), int(ly), sp_sz, sp_h, equipped_item)
     # 채팅 먼저 닉네임 위에, 상태는 채팅 위에
     _bubble_y = _nick_y
-    if local_chat and now2-local_chat_t<10:
-        _draw_online_chat_bubble(surf,int(lx),_bubble_y,local_chat)
-        _bubble_y -= (get_font(10,bold=True).size(local_chat)[1] + 8)
+    _show_img = _local_sent_img[0] if now2-_local_sent_img[1]<10 else None
+    if (local_chat or _show_img) and now2-local_chat_t<10:
+        _draw_online_chat_bubble(surf,int(lx),_bubble_y,local_chat,_show_img)
+        _bubble_y -= (get_font(10,bold=True).size(local_chat or ' ')[1] + 8)
     if status_msg:
         _draw_status_bubble(surf, int(lx), _bubble_y, status_msg)
     # 밀치기 팔 애니메이션
@@ -2971,18 +3041,40 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
     fc2=get_font(11)
     for idx,msg in enumerate(chat_msgs[-5:]):
         col3=(255,240,140) if msg.get('nick')==lnick else (185,225,200)
-        mt=fc2.render(f"{msg.get('nick','?')}: {msg.get('text','')}", True, col3)
+        if msg.get('img'):
+            label = f"{msg.get('nick','?')}: 📎 [이미지]"
+        else:
+            label = f"{msg.get('nick','?')}: {msg.get('text','')}"
+        mt=fc2.render(label, True, col3)
         surf.blit(mt,(8, OH_PLAY+8+idx*18))
-    # 입력창
+    # 입력창 + 첨부 아이콘
     inp_y=OH_PLAY+OH_CHAT-30
-    inp_bg=pygame.Surface((OW-16,24),pygame.SRCALPHA)
+    # 첨부 아이콘 (입력창 왼쪽)
+    att_x=8; att_y=inp_y
+    att_bg=pygame.Surface((22,24),pygame.SRCALPHA)
+    att_bg.fill((20,50,40,200)); pygame.draw.rect(att_bg,(60,160,100),(0,0,22,24),1,border_radius=4)
+    surf.blit(att_bg,(att_x,att_y))
+    # 📎 아이콘 (간단한 픽셀 아트)
+    _ic=(160,220,180)
+    pygame.draw.line(surf,_ic,(att_x+11,att_y+6),(att_x+11,att_y+16),2)
+    pygame.draw.arc(surf,_ic,pygame.Rect(att_x+6,att_y+4,10,8),0,3.14,2)
+    pygame.draw.arc(surf,_ic,pygame.Rect(att_x+8,att_y+9,8,10),3.14,6.28,2)
+    # 입력창 (첨부 아이콘 오른쪽으로 밀기)
+    inp_bg=pygame.Surface((OW-38,24),pygame.SRCALPHA)
     inp_bg.fill((20,50,40,200) if chat_active else (12,30,25,180))
-    pygame.draw.rect(inp_bg,(60,160,100) if chat_active else (35,90,65),(0,0,OW-16,24),1,border_radius=5)
-    surf.blit(inp_bg,(8,inp_y))
-    disp2=(chat_input+chat_ime) if chat_active else '엔터키로 채팅 입력...'
-    col4=(220,245,220) if chat_active else (100,140,115)
-    fi2=get_font(11); ti2=fi2.render(disp2[:38],True,col4)
-    surf.blit(ti2,(12,inp_y+4))
+    pygame.draw.rect(inp_bg,(60,160,100) if chat_active else (35,90,65),(0,0,OW-38,24),1,border_radius=5)
+    surf.blit(inp_bg,(32,inp_y))
+    if _pending_img_b64:
+        disp2 = '선택한 이미지를 전송할까요? (엔터)'
+        col4  = (255,220,80)
+    elif chat_active:
+        disp2 = chat_input + chat_ime
+        col4  = (220,245,220)
+    else:
+        disp2 = '엔터키로 채팅 입력...'
+        col4  = (100,140,115)
+    fi2=get_font(11); ti2=fi2.render(disp2[:36],True,col4)
+    surf.blit(ti2,(36,inp_y+4))
     # 액션 애니메이션 (로컬)
     if equipped_item == 'angel_halo':
         hlw = int(sp_sz*0.80); hlh = max(1,int(hlw*3//11))
@@ -6384,7 +6476,7 @@ def draw_intro_screen(surf, bg, has_save):
 
 # ── 메인 ──────────────────────────────────────────────────────
 def main():
-    global _current_stage, _dev_spawn_idx
+    global _current_stage, _dev_spawn_idx, _pending_img_b64
     bg          = make_bg()
     bubbles     = [Bubble() for _ in range(22)]
     pop_bubbles    = []
@@ -6593,13 +6685,19 @@ def main():
                     elif event.key in (pygame.K_s,pygame.K_DOWN):  online_keys['s']=True
                     elif event.key in (pygame.K_a,pygame.K_LEFT):  online_keys['a']=True
                     elif event.key in (pygame.K_d,pygame.K_RIGHT): online_keys['d']=True
-                elif show_online and online_chat_active:
-                    if event.key == pygame.K_RETURN and online_chat_input.strip():
+                elif show_online and (online_chat_active or _pending_img_b64):
+                    if event.key == pygame.K_RETURN and (online_chat_input.strip() or _pending_img_b64):
                         import time as _tm3; _msg3=online_chat_input.strip()
-                        online_local_chat=_msg3; online_local_chat_t=int(_tm3.time())
-                        _ts3 = send_online_chat(player_nickname, _msg3)
-                        _online_chat.append({'nick':player_nickname,'text':_msg3,'t':_ts3})
+                        online_local_chat=_msg3 or '📎'; online_local_chat_t=int(_tm3.time())
+                        _ts3 = send_online_chat(player_nickname, _msg3, img=_pending_img_b64)
+                        _entry = {'nick':player_nickname,'text':_msg3,'t':_ts3}
+                        if _pending_img_b64:
+                            _entry['img'] = _pending_img_b64
+                            _local_sent_img[0] = _pending_img_b64
+                            _local_sent_img[1] = int(_tm3.time())
+                        _online_chat.append(_entry)
                         _online_chat[:] = sorted(_online_chat,key=lambda x:x.get('t',0))[-8:]
+                        _pending_img_b64 = None
                         online_chat_input=''; online_chat_ime=''
                         online_chat_active=False; pygame.key.stop_text_input()
                     elif event.key == pygame.K_ESCAPE:
@@ -6869,7 +6967,11 @@ def main():
                                 online_selected = _found
                         # 채팅창 클릭
                         inp_y=OH_PLAY+OH_CHAT-30
-                        if pygame.Rect(8,inp_y,OW-16,24).collidepoint(mx,my):
+                        # 첨부 아이콘 클릭
+                        if pygame.Rect(8,inp_y,22,24).collidepoint(mx,my):
+                            _open_image_dialog_async()
+                        # 입력창 클릭
+                        elif pygame.Rect(32,inp_y,OW-38,24).collidepoint(mx,my):
                             online_chat_active=True; pygame.key.start_text_input()
                     elif show_settings:
                         if pygame.Rect(15,12,75,28).collidepoint(mx,my):
@@ -7303,6 +7405,13 @@ def main():
         draw_scroll_icon(screen, SCROLL_RECT, has_new_doc)
         draw_aquarium_icon(screen, AQUARIUM_RECT)
         draw_ranking_icon(screen, RANKING_RECT)
+        # 이미지 선택 결과 확인
+        if _img_dialog_result[0] is not None and not _img_dialog_running[0]:
+            _pending_img_b64 = _img_dialog_result[0]
+            _img_dialog_result[0] = None
+            if show_online:  # 이미지 선택 완료 → 채팅 활성화
+                online_chat_active = True
+                pygame.key.start_text_input()
         draw_settings_icon(screen, SETTINGS_RECT)
         draw_online_icon(screen, ONLINE_RECT)
         if show_online:
