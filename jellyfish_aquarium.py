@@ -4586,6 +4586,7 @@ def draw_inventory(surf, inventory, page=0):
             elif slot == 27: spr = pygame.transform.scale(TWIN_BELL_SPRITE, (sw, sh))
             elif slot == 28: spr = pygame.transform.scale(BABY_BELL_SPRITE, (sw, sh))
             elif slot == 29: spr = pygame.transform.scale(DEMON_BELL_SPRITE, (sw, sh))
+            if slot == 29: _draw_demon_wings(surf, pcx, pcy+sh//2-4, int(sw*0.92), int(sh*0.92))
             surf.blit(spr, (pcx-sw//2, pcy-4))
             _draw_slot_overlay(surf, slot, pcx, pcy, sw, sh)
             fc = get_font(12, bold=True)
@@ -4779,6 +4780,7 @@ def draw_jelly_detail(surf, slot, inventory):
         elif slot == 27: spr = pygame.transform.scale(TWIN_BELL_SPRITE, (sw, sh))
         elif slot == 28: spr = pygame.transform.scale(BABY_BELL_SPRITE, (sw, sh))
         elif slot == 29: spr = pygame.transform.scale(DEMON_BELL_SPRITE, (sw, sh))
+        if slot == 29: _draw_demon_wings(surf, pcx, pcy+sh//2-4, sw, sh)
         surf.blit(spr, (pcx - sw//2, pcy - 4))
         _draw_slot_overlay(surf, slot, pcx, pcy, sw, sh)
     else:
