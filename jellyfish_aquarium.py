@@ -1,4 +1,4 @@
-import pygame
+﻿import pygame
 import math
 import random
 import sys
@@ -232,7 +232,7 @@ try:
 except Exception:
     _fb_session = None
 
-def sync_online_pos(nick, x, y, action=None, action_phase=0.0, equipped_item=None, push_anim_t=0, push_dir=(0,0), status_msg='', full=False):
+def sync_online_pos(nick, x, y, action=None, action_phase=0.0, equipped_item=None, push_anim_t=0, push_dir=(0,0), status_msg='', full=False, loc='main'):
     def _s():
         try:
             import urllib.parse as _up2, time as _tm
@@ -246,6 +246,7 @@ def sync_online_pos(nick, x, y, action=None, action_phase=0.0, equipped_item=Non
             payload['push_start'] = round(_tm.time()-(18-push_anim_t)/60.0,3) if push_anim_t>0 else 0
             payload['push_dir_x'] = round(push_dir[0], 2)
             payload['push_dir_y'] = round(push_dir[1], 2)
+            payload['loc']        = loc
             if _fb_session:
                 _fb_session.put(url, json=payload, timeout=3)
             else:
@@ -576,6 +577,7 @@ W_PIX = 16
 DEV_MODE = False  # False = 정상 플레이 모드
 _dev_spawn_idx = None  # DEV: 강제 스폰 해파리 (None=랜덤)
 _bat_particles = []    # 악마 날개 착용 이동 파티클
+_plaza_bg      = None  # 광장 배경 캐시
 _online_prev_pos = {}  # 다른 플레이어 이전 위치 (박쥐 이펙트용)
 
 # ── 폰트 ──────────────────────────────────────────────────────
@@ -1707,6 +1709,13 @@ def make_demon_bell_sprite():
 
 DEMON_BELL_SPRITE = make_demon_bell_sprite()
 
+try:
+    _PLAZA_STATUE_IMG = pygame.image.load(
+        os.path.join(_BASE, 'plaza_statue.png')).convert_alpha()
+    _PLAZA_STATUE_IMG = pygame.transform.scale(_PLAZA_STATUE_IMG, (220, 220))
+except Exception:
+    _PLAZA_STATUE_IMG = None
+
 def make_demon_wings_sprite():
     """악마 날개: 11x6 픽셀아트, ps=4 (게임 표준)."""
     art = [
@@ -1791,6 +1800,7 @@ RANKING_RECT   = pygame.Rect(WIDTH-48, 138, 38, 38)
 SETTINGS_RECT  = pygame.Rect(6,  6, 38, 38)
 ONLINE_RECT    = pygame.Rect(6, 50, 38, 38)
 OW = 380; OH_PLAY = 430; OH_CHAT = 130  # 온라인 월드 치수
+PLAZA_W = OW * 3   # 광장 전체 너비 (3배)
 # 설정 화면 슬라이더 (x, y, width)
 SL_BGM  = (50, 175, WIDTH-100)
 SL_SFX  = (50, 248, WIDTH-100)
@@ -2830,6 +2840,64 @@ def make_online_bg():
     return s
 
 
+def _draw_plaza_deco(surf, cam_x=0):
+    """광장 — 포인트 라이트 레벨디자인 + 부드러운 반딧불이 + 자연스러운 발광."""
+    t   = pygame.time.get_ticks() * 0.001
+    # 광장 월드 중앙 기준, cam_x 반영
+    wcx = PLAZA_W//2;  cy = OH_PLAY//2
+    cx  = wcx - cam_x  # 화면 기준 중앙
+    rng = random.Random(37)
+
+    # ── 포인트 라이트 (레벨디자인 배치) ────────────────────────
+    # (x, y, 반지름, 색, 펄스속도, 펄스강도)
+    # 월드 좌표로 배치 후 cam_x 반영
+    point_lights_world = [
+        (40,70,45,(60,140,80),0.6,0.3),(OW-45,90,50,(50,120,90),0.5,0.25),
+        (55,OH_PLAY-80,40,(45,110,70),0.7,0.3),(OW-50,OH_PLAY-70,42,(55,130,85),0.55,0.28),
+        (wcx-60,cy-30,35,(70,160,100),0.8,0.35),(wcx+55,cy+25,32,(65,150,95),0.65,0.3),
+        (wcx,cy-95,28,(80,180,110),0.9,0.4),(wcx+10,cy+90,26,(75,170,105),0.75,0.35),
+        (OW+80,60,38,(55,130,80),0.6,0.28),(OW+OW-60,OH_PLAY-90,42,(50,120,75),0.5,0.3),
+        (OW*2+50,80,40,(60,140,85),0.7,0.32),(OW*2+OW-40,cy,35,(65,150,90),0.65,0.27),
+    ]
+    for wx2,ly2,lr,lc,lspd,lamp in point_lights_world:
+        lx2 = wx2 - cam_x
+        if lx2 < -lr*2 or lx2 > OW+lr*2: continue
+        pg2 = 0.65 + lamp*abs(math.sin(t*lspd))
+        for ring in range(5,0,-1):
+            gr2  = int(lr*(ring/5)*pg2)
+            ga2  = int(35*pg2*(ring/5))
+            gs4  = pygame.Surface((gr2*2+2,gr2*2+2),pygame.SRCALPHA)
+            pygame.draw.circle(gs4,(*lc,ga2),(gr2+1,gr2+1),gr2)
+            surf.blit(gs4,(lx2-gr2-1,ly2-gr2-1))
+
+    # ── 나무 기둥 (배경 끝쪽) ───────────────────────────────────
+    trunks = [(18,0,14,180),(OW-26,0,16,160),(22,220,12,210),(OW-30,200,14,230),
+              (OW+30,0,15,170),(OW*2-28,0,14,180),(OW+25,210,13,200),(OW*2-32,195,15,220)]
+    for wx,ty,tw,th in trunks:
+        tx = wx - cam_x
+        if tx < -tw or tx > OW+tw: continue
+        pygame.draw.rect(surf,(42,26,12),(int(tx),ty,tw,th))
+        pygame.draw.rect(surf,(55,36,18),(int(tx),ty,tw//3,th))
+        # 이끼 반점
+        for _ in range(6):
+            mx2=tx+rng.randint(0,tw); my2=ty+rng.randint(0,th//2)
+            pygame.draw.circle(surf,(30,70,35),(mx2,my2),rng.randint(2,5))
+
+    # 연못+석상 이미지
+    if _PLAZA_STATUE_IMG is not None:
+        _img_w = _PLAZA_STATUE_IMG.get_width()
+        _img_h = _PLAZA_STATUE_IMG.get_height()
+        surf.blit(_PLAZA_STATUE_IMG, (int(cx)-_img_w//2, cy-_img_h//2))
+
+    # ── 발광 안개 ───────────────────────────────────────────────
+    for i in range(4):
+        fx3=cx+int(math.sin(t*0.25+i*1.5)*80); fy3=cy+int(math.cos(t*0.2+i*1.8)*45)
+        fw2=50+int(12*abs(math.sin(t*0.4+i))); fh2=14
+        fs2=pygame.Surface((fw2,fh2),pygame.SRCALPHA)
+        pygame.draw.ellipse(fs2,(40,120,80,18),(0,0,fw2,fh2))
+        surf.blit(fs2,(fx3-fw2//2,fy3-fh2//2))
+
+
 def _draw_online_tentacles(surf, cx, cy, bw, bh, phase, moving):
     tc = (228, 175, 132)
     amp = 4.5 if moving else 1.8
@@ -2890,10 +2958,33 @@ def _draw_status_bubble(surf, cx, top_y, text):
     surf.blit(tw,(bx2+pad, by2+pad//2))
 
 
-def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_active, chat_ime, move_phase=0.0, local_chat='', local_chat_t=0, interact_open=False, action=None, action_phase=0.0, selected=None, pushed=None, push_anim_t=0, push_dir=(1,0), equipped_item=None, self_pushed=None, status_msg='', show_status_input=False, status_input_text='', status_input_ime='', call_selected=None, chat_pinned=False):
-    global _online_bg
+def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_active, chat_ime, move_phase=0.0, local_chat='', local_chat_t=0, interact_open=False, action=None, action_phase=0.0, selected=None, pushed=None, push_anim_t=0, push_dir=(1,0), equipped_item=None, self_pushed=None, status_msg='', show_status_input=False, status_input_text='', status_input_ime='', call_selected=None, chat_pinned=False, loc='main', cam_x=0):
+    lx = lx - cam_x   # 카메라 오프셋 적용
+    global _online_bg, _plaza_bg
     if _online_bg is None: _online_bg = make_online_bg()
-    surf.blit(_online_bg,(0,0))
+    if loc == 'plaza':
+        # 광장 전용 배경 (PLAZA_W 넓이로 생성, 카메라 스크롤)
+        if _plaza_bg is None or _plaza_bg.get_width() < PLAZA_W:
+            _pb = pygame.Surface((PLAZA_W, OH_PLAY))
+            for y in range(OH_PLAY):
+                t2 = y/OH_PLAY
+                pygame.draw.line(_pb,(int(45+t2*20),int(52+t2*18),int(30+t2*12)),(0,y),(PLAZA_W,y))
+            _rng=random.Random(77)
+            # 바닥 어두운 얼룩 패치
+            for _ in range(22):
+                bx3=_rng.randint(0,OW); by3=_rng.randint(0,OH_PLAY)
+                c3=(int(12+_rng.randint(0,8)),int(18+_rng.randint(0,12)),int(10+_rng.randint(0,8)))
+                pygame.draw.ellipse(_pb,c3,(bx3,by3,_rng.randint(20,55),_rng.randint(10,28)))
+            # 바닥 돌멩이
+            for _ in range(15):
+                rx=_rng.randint(5,OW-5); ry=_rng.randint(5,OH_PLAY-5)
+                rs=_rng.randint(3,8)
+                pygame.draw.ellipse(_pb,(int(35+_rng.randint(0,15)),int(38+_rng.randint(0,12)),int(30+_rng.randint(0,10))),(rx,ry,rs*2,rs))
+            _plaza_bg = _pb
+        surf.blit(_plaza_bg,(-int(cam_x),0))
+        _draw_plaza_deco(surf, int(cam_x))
+    else:
+        surf.blit(_online_bg,(0,0))
     sp_sz = 40; sp_h = int(sp_sz*0.75)
     import time as _tm2; now2 = int(_tm2.time())
 
@@ -2907,7 +2998,8 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
     if pushed is None: pushed = {}
     # 다른 플레이어
     for nick,data in players.items():
-        px2=int(data.get('cur_x', data.get('x',190))); py2=int(data.get('cur_y', data.get('y',200)))
+        if data.get('loc','main') != loc: continue
+        px2=int(data.get('cur_x', data.get('x',190)))-int(cam_x); py2=int(data.get('cur_y', data.get('y',200)))
         spr2=pygame.transform.scale(PLAYER_BELL_SPRITE,(sp_sz,sp_h))
         t_phase = data.get('phase', now2*2.0)
         if nick in pushed:
@@ -3114,6 +3206,19 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
     # 온라인 인원
     fo2=get_font(10); to2=fo2.render(f'접속자 {len(players)+1}명',True,(120,195,155))
     surf.blit(to2,(8,6))
+    # 광장 아이콘 버튼 (접속자 수 아래)
+    _plx,_ply=8,20
+    _pl_bg=pygame.Surface((38,22),pygame.SRCALPHA)
+    _in_plaza = (loc == 'plaza')
+    _pl_bg.fill((20,75,50,230) if _in_plaza else (12,42,32,200))
+    pygame.draw.rect(_pl_bg,(80,200,130) if _in_plaza else (45,120,80),(0,0,38,22),1,border_radius=4)
+    surf.blit(_pl_bg,(_plx,_ply))
+    # 나무 아이콘
+    pygame.draw.rect(surf,(60,100,55),(_plx+17,_ply+13,4,7))
+    pygame.draw.circle(surf,(70,185,90),(_plx+19,_ply+10),6)
+    pygame.draw.circle(surf,(100,210,110),(_plx+17,_ply+8),3)
+    fo3=get_font(9); to3=fo3.render('광장',True,(160,240,180))
+    surf.blit(to3,(_plx+26,_ply+5))
 
 
 def draw_player_item(surf, cx, cy, bw, bh, item_id):
@@ -6508,6 +6613,8 @@ def main():
     online_chat_ime     = ''
     online_chat_active  = False
     online_sync_t       = 0
+    online_loc          = 'main'   # 'main' 또는 'plaza'
+    plaza_cam_x         = 0.0      # 광장 카메라 X 오프셋
     online_full_sync_t  = 0
     online_fetch_t      = 0
     online_move_phase    = 0.0
@@ -6844,8 +6951,21 @@ def main():
                                 pinned_chat_active = False
                                 pygame.key.stop_text_input()
                     if show_online:
+                        # 광장 버튼 — 최우선 처리
+                        if pygame.Rect(5, 18, 44, 26).collidepoint(mx,my) and not show_settings:
+                            if online_loc == 'main':
+                                online_loc = 'plaza'
+                                online_x = float(PLAZA_W//2)       # 석상 앞
+                                online_y = float(OH_PLAY//2 + 38)
+                                plaza_cam_x = float(PLAZA_W//2 - OW//2)
+                            else:
+                                online_loc = 'main'
+                                online_x = float(OW//2)
+                                online_y = float(OH_PLAY//2)
+                                plaza_cam_x = 0.0
+                            online_sync_t = 10; play_ui_click()
                         # 설정창 열려있으면 먼저 닫기 처리
-                        if show_settings:
+                        elif show_settings:
                             if pygame.Rect(15,12,75,28).collidepoint(mx,my):
                                 show_settings = False
                                 save_game(inventory,_current_stage,cult_docs,aquarium,player_nickname,bgm_vol,sfx_vol)
@@ -7418,10 +7538,16 @@ def main():
             # WASD 이동 (밤에 시민은 이동 불가)
             spd = 2.5
             if True:
+                _x_max = PLAZA_W-20 if online_loc=='plaza' else OW-20
                 if online_keys['w'] and not online_chat_active: online_y = max(30, online_y-spd)
                 if online_keys['s'] and not online_chat_active: online_y = min(OH_PLAY-30, online_y+spd)
                 if online_keys['a'] and not online_chat_active: online_x = max(20, online_x-spd)
-                if online_keys['d'] and not online_chat_active: online_x = min(OW-20, online_x+spd)
+                if online_keys['d'] and not online_chat_active: online_x = min(_x_max, online_x+spd)
+                # 광장 카메라 업데이트
+                if online_loc == 'plaza':
+                    _target_cam = online_x - OW//2
+                    plaza_cam_x += (_target_cam - plaza_cam_x) * 0.12
+                    plaza_cam_x = max(0, min(PLAZA_W-OW, plaza_cam_x))
                 # 악마 날개 착용 이동 시 박쥐 파티클 스폰
                 if equipped_item == 'demon_wings' and any(online_keys.values()) and not online_chat_active:
                     if random.random() < 0.25:
@@ -7430,7 +7556,7 @@ def main():
             online_sync_t += 1
             if online_sync_t >= 2:
                 online_sync_t = 0
-                sync_online_pos(player_nickname, online_x, online_y, online_action, online_action_phase, equipped_item, online_push_anim_t, online_push_dir, online_status_msg)
+                sync_online_pos(player_nickname, online_x, online_y, online_action, online_action_phase, equipped_item, online_push_anim_t, online_push_dir, online_status_msg, loc=online_loc)
             online_fetch_t += 1
             if online_fetch_t >= 90:  # 채팅만 주기적으로 fetch
                 online_fetch_t = 0
@@ -7564,6 +7690,7 @@ def main():
                 online_self_pushed['vx'] *= 0.82; online_self_pushed['vy'] *= 0.82
                 if online_self_pushed['timer'] <= 0: online_self_pushed = None
             _filtered_chat = [m for m in _online_chat if m.get('t',0) >= online_join_t]
+            # 광장 배경은 draw_online_world 내부에서 처리
             draw_online_world(screen, online_x, online_y, player_nickname,
                               _online_players, _filtered_chat,
                               online_chat_input, online_chat_active, online_chat_ime,
@@ -7573,7 +7700,8 @@ def main():
                               online_push_anim_t, online_push_dir,
                               equipped_item, online_self_pushed,
                               online_status_msg, show_status_input, status_input, status_ime,
-                              call_selected, chat_pinned)
+                              call_selected, chat_pinned, online_loc,
+                              plaza_cam_x if online_loc=='plaza' else 0)
             # 박쥐 파티클 업데이트 + 렌더
             if _bat_particles:
                 _draw_update_bats(screen)

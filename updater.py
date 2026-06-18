@@ -19,18 +19,24 @@ def _get_local_sha():
     except:
         return ''
 
-def _download():
-    req = urllib.request.Request(RAW_URL, headers={'User-Agent': 'jf-updater'})
+def _download_file(url, dest):
+    req = urllib.request.Request(url, headers={'User-Agent': 'jf-updater'})
     with urllib.request.urlopen(req, timeout=30) as r:
         data = r.read()
-    tmp = PY_FILE + '.tmp'
-    with open(tmp, 'wb') as f:
-        f.write(data)
-    # 교체
-    if os.path.exists(PY_FILE):
-        os.replace(tmp, PY_FILE)
-    else:
-        os.rename(tmp, PY_FILE)
+    tmp = dest + '.tmp'
+    with open(tmp, 'wb') as f: f.write(data)
+    if os.path.exists(dest): os.replace(tmp, dest)
+    else: os.rename(tmp, dest)
+
+def _download():
+    base = f'https://raw.githubusercontent.com/{REPO}/{BRANCH}'
+    py_dir = os.path.dirname(os.path.abspath(__file__))
+    _download_file(f'{base}/jellyfish_aquarium.py', PY_FILE)
+    # 추가 에셋
+    for asset in ['plaza_statue.png']:
+        dest = os.path.join(py_dir, asset)
+        try: _download_file(f'{base}/{asset}', dest)
+        except: pass
 
 def check_and_update():
     try:
