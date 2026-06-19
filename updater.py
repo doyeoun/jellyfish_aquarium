@@ -37,11 +37,11 @@ def _download():
 
 def check_and_update():
     try:
-        sha = _get_remote_sha()
-        if sha != _get_local_sha():
+        remote = _get_remote_sha()
+        if remote != _get_local_sha():
             _download()
             with open(VER_FILE, 'w') as f:
-                f.write(sha)
+                f.write(remote)
     except Exception:
         pass  # 업데이트 실패해도 게임은 실행
 
