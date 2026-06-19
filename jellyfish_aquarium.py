@@ -3179,7 +3179,7 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
     wx_icon=OW-20; wy_icon=OH_PLAY-20
     draw_online_jelly_icon(surf,wx_icon,wy_icon,interact_open)
     if interact_open:
-        draw_online_interact_list(surf,wx_icon,wy_icon,action)
+        draw_online_interact_list(surf,wx_icon,wy_icon,action,action_phase)
     # 말풍선(상태메세지) 아이콘
     sb_x=OW-44; sb_y=OH_PLAY-20
     sb_active = bool(status_msg)
@@ -3206,19 +3206,19 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
     # 온라인 인원
     fo2=get_font(10); to2=fo2.render(f'접속자 {len(players)+1}명',True,(120,195,155))
     surf.blit(to2,(8,6))
-    # 광장 아이콘 버튼 (접속자 수 아래)
-    _plx,_ply=8,20
-    _pl_bg=pygame.Surface((38,22),pygame.SRCALPHA)
-    _in_plaza = (loc == 'plaza')
-    _pl_bg.fill((20,75,50,230) if _in_plaza else (12,42,32,200))
-    pygame.draw.rect(_pl_bg,(80,200,130) if _in_plaza else (45,120,80),(0,0,38,22),1,border_radius=4)
-    surf.blit(_pl_bg,(_plx,_ply))
-    # 나무 아이콘
-    pygame.draw.rect(surf,(60,100,55),(_plx+17,_ply+13,4,7))
-    pygame.draw.circle(surf,(70,185,90),(_plx+19,_ply+10),6)
-    pygame.draw.circle(surf,(100,210,110),(_plx+17,_ply+8),3)
-    fo3=get_font(9); to3=fo3.render('광장',True,(160,240,180))
-    surf.blit(to3,(_plx+26,_ply+5))
+    # 광장 아이콘 버튼 (DEV_MODE 전용)
+    if DEV_MODE:
+        _plx,_ply=8,20
+        _pl_bg=pygame.Surface((38,22),pygame.SRCALPHA)
+        _in_plaza = (loc == 'plaza')
+        _pl_bg.fill((20,75,50,230) if _in_plaza else (12,42,32,200))
+        pygame.draw.rect(_pl_bg,(80,200,130) if _in_plaza else (45,120,80),(0,0,38,22),1,border_radius=4)
+        surf.blit(_pl_bg,(_plx,_ply))
+        pygame.draw.rect(surf,(60,100,55),(_plx+17,_ply+13,4,7))
+        pygame.draw.circle(surf,(70,185,90),(_plx+19,_ply+10),6)
+        pygame.draw.circle(surf,(100,210,110),(_plx+17,_ply+8),3)
+        fo3=get_font(9); to3=fo3.render('광장',True,(160,240,180))
+        surf.blit(to3,(_plx+26,_ply+5))
 
 
 def draw_player_item(surf, cx, cy, bw, bh, item_id):
@@ -3722,8 +3722,8 @@ def draw_online_jelly_icon(surf, x, y, highlighted=False):
         pygame.draw.line(surf, col, (x+dx,y+2),(x+dx-1,y+10),1)
 
 
-def draw_online_interact_list(surf, wx, wy, action):
-    items = [('banzai','만세하기'),('dance','춤추기'),('smoking','흡연'),('thumbsup','따봉'),('thumbsup2','쌍따봉')]
+def draw_online_interact_list(surf, wx, wy, action, action_phase=0.0):
+    items = [('banzai','만세하기'),('dance','춤추기'),('smoking','흡연'),('thumbsup','따봉'),('thumbsup2','쌍따봉'),('working','작업 모드'),('crunch','마감 모드')]
     iw, ih = 115, 36
     ly = wy - len(items)*ih - 8
     for i,(key,label) in enumerate(items):
@@ -3735,8 +3735,46 @@ def draw_online_interact_list(surf, wx, wy, action):
         lx = min(wx-iw//2, OW-iw-5)
         surf.blit(bg,(lx,iy))
         fl=get_font(14,bold=True)
-        tl=fl.render(label,True,(200,255,220) if active else (155,215,180))
+        _yellow_keys = ('working', 'crunch')
+        _tc = (255,240,80) if (key in _yellow_keys and active) else (255,220,60) if key in _yellow_keys else (200,255,220) if active else (155,215,180)
+        tl=fl.render(label,True,_tc)
         surf.blit(tl,(lx+iw//2-tl.get_width()//2, iy+ih//2-tl.get_height()//2))
+        # 토글 활성화 시 노란 빛 테두리가 버튼 둘레를 돌아감
+        if key in ('working','crunch') and active:
+            _perim = 2*(iw+ih)
+            _seg = _perim // 3
+            _t = int(action_phase * 90) % _perim
+            for _dp in range(0, _seg, 2):
+                _p = (_t + _dp) % _perim
+                if _p < iw: _bx,_by = lx+_p, iy
+                elif _p < iw+ih: _bx,_by = lx+iw, iy+(_p-iw)
+                elif _p < 2*iw+ih: _bx,_by = lx+iw-(_p-iw-ih), iy+ih
+                else: _bx,_by = lx, iy+ih-(_p-2*iw-ih)
+                _bright = int(255*(1-_dp/_seg))
+                pygame.draw.circle(surf,(255,min(255,_bright+80),0),(_bx,_by),1)
+        # 마감 모드 활성화 시 왼쪽에 크런치 모드 버튼 표시
+        if key == 'crunch' and action in ('crunch','supercrunch'):
+            sw2 = 45; sh2 = ih // 2
+            slx = lx - sw2 - 6
+            sly = iy + (ih - sh2) // 2
+            sbg = pygame.Surface((sw2,sh2),pygame.SRCALPHA)
+            _sc_active = action == 'supercrunch'
+            sbg.fill((70,10,10,245) if _sc_active else (45,10,10,225))
+            pygame.draw.rect(sbg,(255,60,60) if _sc_active else (180,50,50),(0,0,sw2,sh2),1,border_radius=4)
+            surf.blit(sbg,(slx,sly))
+            stl=get_font(10,bold=True).render('크런치',True,(255,60,60) if _sc_active else (220,80,80))
+            surf.blit(stl,(slx+sw2//2-stl.get_width()//2, sly+sh2//2-stl.get_height()//2))
+            # 크런치 서브버튼 활성화 시 빨간 빛 테두리
+            if _sc_active:
+                _sp = 2*(sw2+sh2); _st = int(action_phase*90)%_sp; _ss = _sp//3
+                for _dp in range(0,_ss,2):
+                    _p=(_st+_dp)%_sp
+                    if _p<sw2: _bx2,_by2=slx+_p,sly
+                    elif _p<sw2+sh2: _bx2,_by2=slx+sw2,sly+(_p-sw2)
+                    elif _p<2*sw2+sh2: _bx2,_by2=slx+sw2-(_p-sw2-sh2),sly+sh2
+                    else: _bx2,_by2=slx,sly+sh2-(_p-2*sw2-sh2)
+                    _br=int(255*(1-_dp/_ss))
+                    pygame.draw.circle(surf,(255,min(255,_br),_br//4),(_bx2,_by2),1)
 
 
 def _draw_online_action(surf, cx, cy, bw, bh, action, phase):
@@ -3827,7 +3865,147 @@ def _draw_online_action(surf, cx, cy, bw, bh, action, phase):
             smk = pygame.Surface((ps*2, ps*2), pygame.SRCALPHA)
             smk.fill((g, g, g+10, alp))
             surf.blit(smk, (sx2, sy2))
-
+    elif action == 'working':
+        # 노트북 + 타이핑 팔
+        ps = max(2, bw // 14)
+        # 노트북 본체
+        lx = cx - int(bw*0.32); ly = cy + int(bh*0.32)
+        lw = int(bw*0.64); lh = int(bh*0.28)
+        pygame.draw.rect(surf, (60,65,75), (lx, ly, lw, lh), border_radius=2)
+        pygame.draw.rect(surf, (80,88,100), (lx+ps, ly+ps, lw-ps*2, lh-ps*2))
+        # 화면 텍스트 깜빡임 커서
+        cur_on = int(phase * 2) % 2 == 0
+        if cur_on:
+            pygame.draw.rect(surf, (160,220,255), (lx+ps*2, ly+ps*2, ps, lh-ps*4))
+        # 키보드 받침
+        kx = lx - ps; ky = ly + lh
+        kw = lw + ps*2; kh = ps*2
+        pygame.draw.rect(surf, (50,54,62), (kx, ky, kw, kh))
+        # 팔: 타이핑 모션 (좌우 번갈아)
+        bob = int(math.sin(phase * 8) * bh * 0.06)
+        for side, phase_off in ((1, 0), (-1, math.pi)):
+            arm_bob = int(math.sin(phase * 8 + phase_off) * bh * 0.07)
+            s1x = cx + side*int(bw*0.32); s1y = cy + bh//8
+            e1x = cx + side*int(bw*0.24); e1y = ky - ps + arm_bob
+            pygame.draw.line(surf, (*tc,215), (s1x,s1y), (e1x,e1y), thick)
+        # "작업 중" 라벨 — 닉네임(cy-bh//2-14~30) 위에 배치
+        fo = get_font(max(8, bw//5))
+        dots = '.' * (int(phase * 2) % 4)
+        tw = fo.render(f'작업 중{dots}', True, (200,230,255))
+        surf.blit(tw, (cx - tw.get_width()//2, cy - bh//2 - tw.get_height() - 26))
+    elif action == 'crunch':
+        ps = max(2, bw // 14)
+        dy = 0
+        # 책상: 해파리 아래에 넓은 상판 + 다리
+        desk_y = cy + int(bh * 0.38) + dy
+        desk_w = int(bw * 1.6); desk_h = ps * 2
+        desk_x = cx - desk_w // 2
+        pygame.draw.rect(surf, (120, 80, 45), (desk_x, desk_y, desk_w, desk_h))
+        pygame.draw.rect(surf, (150, 105, 60), (desk_x, desk_y, desk_w, ps))
+        # 책상 다리
+        leg_w = ps; leg_h = int(bh * 0.44)
+        for lx2 in (desk_x + ps*2, desk_x + desk_w - ps*2 - leg_w):
+            pygame.draw.rect(surf, (100, 65, 35), (lx2, desk_y + desk_h, leg_w, leg_h))
+        # 노트북 키보드 (책상 위 중앙)
+        kbd_w = int(bw * 0.78); kbd_h = ps * 2
+        kbd_x = cx - kbd_w // 2; kbd_y = desk_y - kbd_h
+        pygame.draw.rect(surf, (55, 60, 70), (kbd_x, kbd_y, kbd_w, kbd_h))
+        # 키 도트
+        for ki in range(5):
+            kix = kbd_x + ps + ki * (kbd_w // 5)
+            pygame.draw.rect(surf, (80, 88, 100), (kix + ps//2, kbd_y + ps//2, kbd_w//5 - ps, ps//2 + 1))
+        # 노트북 스크린 (키보드 바로 위, 앞모습)
+        scr_w = int(bw * 0.70); scr_h = int(bh * 0.32)
+        scr_x = cx - scr_w // 2; scr_y = kbd_y - scr_h - ps
+        pygame.draw.rect(surf, (55, 60, 70), (scr_x, scr_y, scr_w, scr_h), border_radius=2)
+        pygame.draw.rect(surf, (80, 110, 145), (scr_x+ps, scr_y+ps, scr_w-ps*2, scr_h-ps*2))
+        # 화면 텍스트 줄
+        for li in range(3):
+            line_y = scr_y + ps*2 + li * (ps*3)
+            line_w = int((scr_w - ps*4) * (0.5 + 0.4 * abs(math.sin(phase + li))))
+            pygame.draw.rect(surf, (140, 200, 255), (scr_x+ps*2, line_y, line_w, ps))
+        # 커서 깜빡임
+        if int(phase * 2) % 2 == 0:
+            cur_li = int(phase * 1.5) % 3
+            cur_x = scr_x + ps*2 + int((scr_w - ps*4) * (0.5 + 0.4 * abs(math.sin(phase + cur_li))))
+            cur_y = scr_y + ps*2 + cur_li * ps*3
+            pygame.draw.rect(surf, (200, 230, 255), (cur_x, cur_y, ps, ps))
+        # 팔: 초기버전 — 직선으로 키보드 타이핑
+        for side in (1, -1):
+            arm_bob = int(math.sin(phase * 9 + (0 if side == 1 else math.pi)) * bh * 0.07)
+            sx2 = cx + side * int(bw * 0.38); sy2 = cy + bh // 8
+            ex2 = cx + side * int(bw * 0.26); ey2 = kbd_y + arm_bob
+            pygame.draw.line(surf, (*tc, 215), (sx2, sy2), (ex2, ey2), thick)
+        # 땀방울
+        for si, (soff_x, soff_y) in enumerate(((int(bw*0.55), -int(bh*0.1)), (int(bw*0.42), -int(bh*0.25)))):
+            sweat_phase = (phase * 2.0 + si * 1.1) % (math.pi * 2)
+            if sweat_phase < math.pi:
+                sa = int(210 * math.sin(sweat_phase))
+                sw = pygame.Surface((ps*2, ps*3), pygame.SRCALPHA)
+                sw.fill((100, 180, 255, sa))
+                surf.blit(sw, (cx + soff_x, cy + soff_y))
+        # 라벨
+        fo = get_font(max(8, bw // 5))
+        dots = '.' * (int(phase * 3) % 4)
+        tw = fo.render(f'작업 중{dots}', True, (200, 230, 255))
+        surf.blit(tw, (cx - tw.get_width() // 2, cy - bh // 2 - tw.get_height() - 26))
+    elif action == 'supercrunch':
+        ps = max(2, bw // 14)
+        dy = 0
+        # 마감 모드와 동일한 책상+노트북
+        desk_y = cy + int(bh * 0.38) + dy
+        desk_w = int(bw * 1.6); desk_h = ps * 2
+        desk_x = cx - desk_w // 2
+        pygame.draw.rect(surf, (120, 80, 45), (desk_x, desk_y, desk_w, desk_h))
+        pygame.draw.rect(surf, (150, 105, 60), (desk_x, desk_y, desk_w, ps))
+        leg_w = ps; leg_h = int(bh * 0.44)
+        for lx2 in (desk_x + ps*2, desk_x + desk_w - ps*2 - leg_w):
+            pygame.draw.rect(surf, (100, 65, 35), (lx2, desk_y + desk_h, leg_w, leg_h))
+        kbd_w = int(bw * 0.78); kbd_h = ps * 2
+        kbd_x = cx - kbd_w // 2; kbd_y = desk_y - kbd_h
+        pygame.draw.rect(surf, (55, 60, 70), (kbd_x, kbd_y, kbd_w, kbd_h))
+        for ki in range(5):
+            kix = kbd_x + ps + ki * (kbd_w // 5)
+            pygame.draw.rect(surf, (80, 88, 100), (kix + ps//2, kbd_y + ps//2, kbd_w//5 - ps, ps//2 + 1))
+        scr_w = int(bw * 0.70); scr_h = int(bh * 0.32)
+        scr_x = cx - scr_w // 2; scr_y = kbd_y - scr_h - ps
+        pygame.draw.rect(surf, (55, 60, 70), (scr_x, scr_y, scr_w, scr_h), border_radius=2)
+        pygame.draw.rect(surf, (80, 110, 145), (scr_x+ps, scr_y+ps, scr_w-ps*2, scr_h-ps*2))
+        for li in range(3):
+            line_y = scr_y + ps*2 + li * (ps*3)
+            line_w = int((scr_w - ps*4) * (0.5 + 0.4 * abs(math.sin(phase + li))))
+            pygame.draw.rect(surf, (140, 200, 255), (scr_x+ps*2, line_y, line_w, ps))
+        if int(phase * 2) % 2 == 0:
+            cur_li = int(phase * 1.5) % 3
+            cur_x = scr_x + ps*2 + int((scr_w - ps*4) * (0.5 + 0.4 * abs(math.sin(phase + cur_li))))
+            cur_y = scr_y + ps*2 + cur_li * ps*3
+            pygame.draw.rect(surf, (200, 230, 255), (cur_x, cur_y, ps, ps))
+        # 팔: 팔꿈치 구부려 엄청 빠르게 와다다다
+        for side in (1, -1):
+            phase_off = 0 if side == 1 else math.pi
+            hand_bob = int(math.sin(phase * 16 + phase_off) * bh * 0.14)
+            sx2 = cx + side * int(bw * 0.36); sy2 = cy + bh // 7
+            elbow_x = cx + side * int(bw * 0.46)
+            elbow_y = cy + int(bh * 0.30)
+            hand_x = cx + side * int(bw * 0.25)
+            hand_y = kbd_y - ps + hand_bob
+            pygame.draw.line(surf, (*tc, 235), (sx2, sy2), (elbow_x, elbow_y), thick)
+            pygame.draw.line(surf, (*tc, 235), (elbow_x, elbow_y), (hand_x, hand_y), thick)
+            pygame.draw.circle(surf, tc, (hand_x, hand_y), max(3, bw // 14))
+        # 땀방울 더 많이
+        for si, (soff_x, soff_y) in enumerate(((int(bw*0.58), -int(bh*0.05)), (int(bw*0.44), -int(bh*0.22)), (int(bw*0.50), -int(bh*0.35)))):
+            sweat_phase = (phase * 2.8 + si * 0.8) % (math.pi * 2)
+            if sweat_phase < math.pi:
+                sa = int(230 * math.sin(sweat_phase))
+                sw = pygame.Surface((ps*2, ps*3), pygame.SRCALPHA)
+                sw.fill((100, 180, 255, sa))
+                surf.blit(sw, (cx + soff_x, cy + soff_y))
+        # 라벨 (빨간색)
+        fo = get_font(max(9, bw // 4), bold=True)
+        tw = fo.render('으아아아!!', True, (255, 20, 20))
+        _shake_x = int(math.sin(phase * 22) * 3)
+        _shake_y = int(math.cos(phase * 18) * 2)
+        surf.blit(tw, (cx - tw.get_width()//2 + _shake_x, cy - bh//2 - tw.get_height() - 26 + _shake_y))
 
 
 
@@ -6951,8 +7129,8 @@ def main():
                                 pinned_chat_active = False
                                 pygame.key.stop_text_input()
                     if show_online:
-                        # 광장 버튼 — 최우선 처리
-                        if pygame.Rect(5, 18, 44, 26).collidepoint(mx,my) and not show_settings:
+                        # 광장 버튼 — DEV_MODE 전용
+                        if DEV_MODE and pygame.Rect(5, 18, 44, 26).collidepoint(mx,my) and not show_settings:
                             if online_loc == 'main':
                                 online_loc = 'plaza'
                                 online_x = float(PLAZA_W//2)       # 석상 앞
@@ -7010,15 +7188,28 @@ def main():
                             online_interact_open = not online_interact_open
                         # 인터랙션 리스트 항목
                         elif online_interact_open:
-                            items=[('banzai',60),('dance',180),('smoking',300),('thumbsup',120),('thumbsup2',120)]
+                            items=[('banzai',60),('dance',180),('smoking',300),('thumbsup',120),('thumbsup2',120),('working',600),('crunch',600)]
                             iw,ih=115,36; wx_c=OW-20; ly_c=OH_PLAY-20-len(items)*ih-8
+                            _clicked=False
                             for i,(key,dur) in enumerate(items):
                                 iy=ly_c+i*ih
                                 lx_c=min(wx_c-iw//2, OW-iw-5)
+                                # 크런치 모드 서브버튼 (마감 모드 활성화 시 왼쪽)
+                                if key=='crunch' and online_action=='crunch':
+                                    sw2=45; sh2=ih//2; slx=lx_c-sw2-6; sly=iy+(ih-sh2)//2
+                                    if pygame.Rect(slx,sly,sw2,sh2).collidepoint(mx,my):
+                                        if online_action=='supercrunch': online_action='crunch'; online_action_timer=999999
+                                        else: online_action='supercrunch'; online_action_timer=999999; online_action_phase=0.0
+                                        online_interact_open=False; online_sync_t=10; _clicked=True; break
                                 if pygame.Rect(lx_c,iy,iw,ih).collidepoint(mx,my):
-                                    online_action=key; online_action_timer=dur; online_action_phase=0.0
-                                    online_interact_open=False; online_sync_t=10; break
-                            else:
+                                    if key in ('crunch','working') and online_action == key:
+                                        online_action=None; online_action_timer=0
+                                    elif key in ('crunch','working'):
+                                        online_action=key; online_action_timer=999999; online_action_phase=0.0
+                                    else:
+                                        online_action=key; online_action_timer=dur; online_action_phase=0.0
+                                    online_interact_open=False; online_sync_t=10; _clicked=True; break
+                            if not _clicked:
                                 online_interact_open=False
                         else:
                             # 호출 버튼 클릭 확인
