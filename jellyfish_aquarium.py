@@ -417,7 +417,7 @@ def fetch_online_bg(nick_self):
                 # Firebase에 아직 없는 로컬 메시지 보존
                 fb_keys = {(m.get('nick'), m.get('t')) for m in fb_msgs}
                 local_only = [m for m in _online_chat if (m.get('nick'), m.get('t')) not in fb_keys]
-                _online_chat = sorted(fb_msgs + local_only, key=lambda x: x.get('t',0))[-8:]
+                _online_chat = sorted(fb_msgs + local_only, key=lambda x: x.get('t',0))[-10:]
         except: pass
     import threading as _t; _t.Thread(target=_f,daemon=True).start()
 
@@ -2959,7 +2959,7 @@ def _draw_status_bubble(surf, cx, top_y, text):
     surf.blit(tw,(bx2+pad, by2+pad//2))
 
 
-def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_active, chat_ime, move_phase=0.0, local_chat='', local_chat_t=0, interact_open=False, action=None, action_phase=0.0, selected=None, pushed=None, push_anim_t=0, push_dir=(1,0), equipped_item=None, self_pushed=None, status_msg='', show_status_input=False, status_input_text='', status_input_ime='', call_selected=None, chat_pinned=False, loc='main', cam_x=0):
+def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_active, chat_ime, move_phase=0.0, local_chat='', local_chat_t=0, interact_open=False, action=None, action_phase=0.0, selected=None, pushed=None, push_anim_t=0, push_dir=(1,0), equipped_item=None, self_pushed=None, status_msg='', show_status_input=False, status_input_text='', status_input_ime='', call_selected=None, chat_pinned=False, loc='main', cam_x=0, chat_scroll=0):
     lx = lx - cam_x   # 카메라 오프셋 적용
     global _online_bg, _plaza_bg
     if _online_bg is None: _online_bg = make_online_bg()
@@ -3134,7 +3134,13 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
     surf.blit(chat_bg,(0,OH_PLAY))
     pygame.draw.line(surf,(40,100,80),(0,OH_PLAY),(OW,OH_PLAY),1)
     fc2=get_font(11)
-    for idx,msg in enumerate(chat_msgs[-5:]):
+    _total_msgs = len(chat_msgs)
+    _max_scroll = max(0, _total_msgs - 5)
+    _scroll = max(0, min(chat_scroll, _max_scroll))
+    _end_idx = _total_msgs - _scroll
+    _start_idx = max(0, _end_idx - 5)
+    _visible_msgs = chat_msgs[_start_idx:_end_idx]
+    for idx,msg in enumerate(_visible_msgs):
         col3=(255,240,140) if msg.get('nick')==lnick else (185,225,200)
         if msg.get('img'):
             label = f"{msg.get('nick','?')}: 📎 [이미지]"
@@ -3142,6 +3148,18 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
             label = f"{msg.get('nick','?')}: {msg.get('text','')}"
         mt=fc2.render(label, True, col3)
         surf.blit(mt,(8, OH_PLAY+8+idx*18))
+    # 스크롤바 (메시지 5개 초과 시)
+    if _total_msgs > 5:
+        _tr_x = OW - 6; _tr_y = OH_PLAY + 4
+        _tr_h = OH_CHAT - 36
+        pygame.draw.rect(surf, (20,50,35), (_tr_x, _tr_y, 3, _tr_h), border_radius=2)
+        _th = max(10, int(_tr_h * 5 / _total_msgs))
+        _tp = int((_tr_h - _th) * (1 - _scroll / _max_scroll)) if _max_scroll else _tr_h - _th
+        pygame.draw.rect(surf, (80,180,120) if _scroll==0 else (120,210,150), (_tr_x, _tr_y + _tp, 3, _th), border_radius=2)
+        if _scroll > 0:
+            fa = get_font(9)
+            ta = fa.render('▲', True, (140,220,160))
+            surf.blit(ta, (OW-ta.get_width()-2, OH_PLAY+2))
     # 입력창 + 첨부 아이콘
     inp_y=OH_PLAY+OH_CHAT-30
     # 첨부 아이콘 (입력창 왼쪽)
@@ -6815,6 +6833,7 @@ def main():
     online_npc_t         = 0.0
     online_join_t        = 0
     _filtered_chat       = []   # 온라인 월드 밖에서도 유지
+    online_chat_scroll   = 0
     online_self_pushed   = None
     online_status_msg    = ''
     show_status_input    = False
@@ -6987,9 +7006,10 @@ def main():
                             _local_sent_img[0] = _pending_img_b64
                             _local_sent_img[1] = int(_tm3.time())
                         _online_chat.append(_entry)
-                        _online_chat[:] = sorted(_online_chat,key=lambda x:x.get('t',0))[-8:]
+                        _online_chat[:] = sorted(_online_chat,key=lambda x:x.get('t',0))[-10:]
                         _pending_img_b64 = None
                         online_chat_input=''; online_chat_ime=''
+                        online_chat_scroll = 0
                         online_chat_active=False; pygame.key.stop_text_input()
                     elif event.key == pygame.K_ESCAPE:
                         online_chat_active=False; online_chat_input=''; pygame.key.stop_text_input()
@@ -7035,7 +7055,8 @@ def main():
                         online_local_chat = _msg4; online_local_chat_t = int(_tm4.time())
                         _ts4 = send_online_chat(player_nickname, _msg4)
                         _online_chat.append({'nick':player_nickname,'text':_msg4,'t':_ts4})
-                        _online_chat[:] = sorted(_online_chat,key=lambda x:x.get('t',0))[-8:]
+                        _online_chat[:] = sorted(_online_chat,key=lambda x:x.get('t',0))[-10:]
+                        online_chat_scroll = 0
                         _filtered_chat = [m for m in _online_chat if m.get('t',0) >= online_join_t]
                         pinned_chat_input = ''; pinned_chat_ime = ''
                         pinned_chat_active = False; pygame.key.stop_text_input()
@@ -7094,6 +7115,9 @@ def main():
                     rows_s = (len(WARDROBE_ITEM_DEFS)+cols_s-1)//cols_s
                     max_scroll = max(0, rows_s*(ch_s+gap_s) - (HEIGHT-58-8))
                     wardrobe_scroll_y = max(0, min(max_scroll, wardrobe_scroll_y - event.y*35))
+                elif show_online and pygame.mouse.get_pos()[1] > OH_PLAY:
+                    _max_cs = max(0, len(_filtered_chat) - 5)
+                    online_chat_scroll = max(0, min(_max_cs, online_chat_scroll + event.y))
             elif event.type == pygame.KEYUP:
                 if show_online:
                     if event.key in (pygame.K_w,pygame.K_UP):    online_keys['w']=False
@@ -7899,7 +7923,8 @@ def main():
                               equipped_item, online_self_pushed,
                               online_status_msg, show_status_input, status_input, status_ime,
                               call_selected, chat_pinned, online_loc,
-                              plaza_cam_x if online_loc=='plaza' else 0)
+                              plaza_cam_x if online_loc=='plaza' else 0,
+                              online_chat_scroll)
             # 박쥐 파티클 업데이트 + 렌더
             if _bat_particles:
                 _draw_update_bats(screen)
