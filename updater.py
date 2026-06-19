@@ -2,15 +2,14 @@ import urllib.request, json, os, subprocess, sys, time
 
 REPO     = 'doyeoun/jellyfish_aquarium'
 BRANCH   = 'master'
-RAW_URL  = f'https://raw.githubusercontent.com/{REPO}/{BRANCH}/jellyfish_aquarium.py'
-API_URL  = f'https://api.github.com/repos/{REPO}/commits/{BRANCH}'
+RAW_BASE = f'https://raw.githubusercontent.com/{REPO}/{BRANCH}'
 VER_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.version')
 PY_FILE  = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'jellyfish_aquarium.py')
 
 def _get_remote_sha():
-    req = urllib.request.Request(API_URL, headers={'User-Agent': 'jf-updater'})
-    with urllib.request.urlopen(req, timeout=6) as r:
-        return json.loads(r.read())['sha']
+    req = urllib.request.Request(f'{RAW_BASE}/version.txt', headers={'User-Agent': 'jf-updater'})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return r.read().decode().strip()
 
 def _get_local_sha():
     try:
@@ -29,13 +28,11 @@ def _download_file(url, dest):
     else: os.rename(tmp, dest)
 
 def _download():
-    base = f'https://raw.githubusercontent.com/{REPO}/{BRANCH}'
     py_dir = os.path.dirname(os.path.abspath(__file__))
-    _download_file(f'{base}/jellyfish_aquarium.py', PY_FILE)
-    # 추가 에셋
+    _download_file(f'{RAW_BASE}/jellyfish_aquarium.py', PY_FILE)
     for asset in ['plaza_statue.png']:
         dest = os.path.join(py_dir, asset)
-        try: _download_file(f'{base}/{asset}', dest)
+        try: _download_file(f'{RAW_BASE}/{asset}', dest)
         except: pass
 
 def check_and_update():
