@@ -196,6 +196,29 @@ def flash_taskbar_window():
         ctypes.windll.user32.FlashWindowEx(ctypes.byref(fi))
     except: pass
 
+def set_window_always_on_top(enabled):
+    try:
+        import ctypes
+        u32 = ctypes.windll.user32
+        # pygame wm_info로 먼저 시도
+        try:
+            import pygame as _pg3
+            hwnd = _pg3.display.get_wm_info().get('window', 0)
+        except:
+            hwnd = 0
+        # 실패 시 창 제목으로 탐색
+        if not hwnd:
+            hwnd = u32.FindWindowW(None, '해파리 수족관 🪼')
+        if not hwnd:
+            return
+        u32.SetWindowPos(
+            ctypes.c_void_p(hwnd),
+            ctypes.c_void_p(-1 if enabled else -2),
+            0, 0, 0, 0,
+            0x0001 | 0x0002  # SWP_NOSIZE | SWP_NOMOVE
+        )
+    except: pass
+
 def send_call_event(target_nick, caller_nick):
     def _c():
         try:
@@ -4077,7 +4100,7 @@ def draw_slider(surf, sx, sy, sw, value, color=(80,140,220)):
     pygame.draw.circle(surf,color,(tx,sy+h//2),8)
 
 
-def draw_settings_screen(surf, bgm_vol, sfx_vol, chat_vol=0.7):
+def draw_settings_screen(surf, bgm_vol, sfx_vol, chat_vol=0.7, always_on_top=False):
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     overlay.fill((5,10,30,245))
     surf.blit(overlay,(0,0))
@@ -4108,6 +4131,24 @@ def draw_settings_screen(surf, bgm_vol, sfx_vol, chat_vol=0.7):
     tp3=pct.render(f'{int(chat_vol*100)}%',True,(220,235,255))
     surf.blit(tp3,(SL_CHAT[0]+SL_CHAT[2]-tp3.get_width(),SL_CHAT[1]-28))
     draw_slider(surf,SL_CHAT[0],SL_CHAT[1],SL_CHAT[2],chat_vol,(200,130,220))
+    # 화면 설정 섹션
+    pygame.draw.line(surf,(50,90,160),(18,SL_CHAT[1]+30),(WIDTH-18,SL_CHAT[1]+30),1)
+    _hs_title = get_font(19,bold=True).render('화면 설정', True, (190,220,255))
+    surf.blit(_hs_title, (WIDTH//2-_hs_title.get_width()//2, SL_CHAT[1]+38))
+    pygame.draw.line(surf,(50,90,160),(18,SL_CHAT[1]+68),(WIDTH-18,SL_CHAT[1]+68),1)
+    # 항상 위 토글
+    _aot_label = fl.render('항상 위에 표시', True, (175,215,250))
+    surf.blit(_aot_label, (SL_CHAT[0], SL_CHAT[1]+80))
+    _aot_bx = SL_CHAT[0]+SL_CHAT[2]-44; _aot_by = SL_CHAT[1]+78
+    _aot_bg = pygame.Surface((44,22), pygame.SRCALPHA)
+    _aot_bg.fill((30,120,60,230) if always_on_top else (50,55,70,200))
+    pygame.draw.rect(_aot_bg, (80,220,120) if always_on_top else (90,95,110), (0,0,44,22), 1, border_radius=11)
+    surf.blit(_aot_bg, (_aot_bx, _aot_by))
+    _aot_txt = get_font(11,bold=True).render('ON' if always_on_top else 'OFF', True, (200,255,210) if always_on_top else (140,145,160))
+    surf.blit(_aot_txt, (_aot_bx+22-_aot_txt.get_width()//2, _aot_by+11-_aot_txt.get_height()//2))
+    # 토글 원
+    _circle_x = (_aot_bx+33) if always_on_top else (_aot_bx+11)
+    pygame.draw.circle(surf, (255,255,255) if always_on_top else (160,165,175), (_circle_x, _aot_by+11), 8)
 
 
 def draw_ranking_icon(surf, rect):
@@ -6806,6 +6847,7 @@ def main():
     show_new_game_warn  = False
     show_quit_confirm   = False
     show_settings       = False
+    always_on_top       = False
     show_online         = False
     online_x            = float(OW//2)
     online_y            = float(OH_PLAY//2)
@@ -7333,6 +7375,10 @@ def main():
                             chat_vol=max(0.0,min(1.0,(mx-SL_CHAT[0])/SL_CHAT[2]))
                             for _sc in [SND_CHAT1,SND_CHAT2]:
                                 if _sc: _sc.set_volume(chat_vol)
+                        elif pygame.Rect(SL_CHAT[0]+SL_CHAT[2]-44, SL_CHAT[1]+78, 44, 22).collidepoint(mx,my):
+                            always_on_top = not always_on_top
+                            set_window_always_on_top(always_on_top)
+                            play_ui_click()
                     elif show_ranking:
                         if pygame.Rect(15,12,75,28).collidepoint(mx,my):
                             show_ranking = False
@@ -7968,7 +8014,7 @@ def main():
             draw_pinned_chat_overlay(screen, _filtered_chat, player_nickname,
                                      pinned_chat_input, pinned_chat_active, pinned_chat_ime)
         if show_settings:
-            draw_settings_screen(screen, bgm_vol, sfx_vol, chat_vol)
+            draw_settings_screen(screen, bgm_vol, sfx_vol, chat_vol, always_on_top)
         if show_ranking:
             draw_ranking_screen(screen, _rankings_cache, _rankings_loading, player_nickname)
         if show_nickname_input and not show_intro:
