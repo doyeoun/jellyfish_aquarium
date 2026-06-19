@@ -572,6 +572,7 @@ if CTYPES_OK:
         pass
 
 clock = pygame.time.Clock()
+pygame.key.set_repeat(400, 40)  # 꾹 누르기: 400ms 후 시작, 40ms 간격으로 반복
 W_PIX = 16
 
 DEV_MODE = False  # False = 정상 플레이 모드
@@ -3028,6 +3029,7 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
             _p_bubble_y -= (get_font(10,bold=True).size(chat_t or ' ')[1]+8)
         if _p_status:
             _draw_status_bubble(surf,px2,_p_bubble_y,_p_status)
+            _p_bubble_y -= (get_font(10,bold=True).size(_p_status)[1] + 20)
         # 다른 플레이어 착용 아이템
         _p_equip = data.get('equipped','')
         if _p_equip and nick not in pushed:
@@ -3048,7 +3050,7 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
         # 다른 플레이어 액션 애니메이션
         _p_action = data.get('action','')
         if _p_action and nick not in pushed:
-            _draw_online_action(surf,px2,py2,sp_sz,sp_h,_p_action,data.get('action_phase',0.0))
+            _draw_online_action(surf,px2,py2,sp_sz,sp_h,_p_action,data.get('action_phase',0.0),_p_bubble_y)
         # 호출 버튼 (우클릭 시)
         if call_selected == nick:
             _cr=18; _cbx=max(_cr,min(OW-_cr,px2)); _cby=max(_cr,py2-sp_h//2-58)
@@ -3101,6 +3103,7 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
         _bubble_y -= (get_font(10,bold=True).size(local_chat or ' ')[1] + 8)
     if status_msg:
         _draw_status_bubble(surf, int(lx), _bubble_y, status_msg)
+        _bubble_y -= (get_font(10,bold=True).size(status_msg)[1] + 20)
     # 밀치기 팔 애니메이션
     if push_anim_t > 0:
         _max_t = 18
@@ -3174,7 +3177,7 @@ def draw_online_world(surf, lx, ly, lnick, players, chat_msgs, chat_input, chat_
         halo_y = int(ly)-sp_h//2-hlh-3+int(math.sin(move_phase)*2)
         surf.blit(hls,(int(lx)-hlw//2, halo_y))
     if action:
-        _draw_online_action(surf,int(lx),int(ly),sp_sz,sp_h,action,action_phase)
+        _draw_online_action(surf,int(lx),int(ly),sp_sz,sp_h,action,action_phase,_bubble_y)
     # 휠 아이콘
     wx_icon=OW-20; wy_icon=OH_PLAY-20
     draw_online_jelly_icon(surf,wx_icon,wy_icon,interact_open)
@@ -3724,17 +3727,17 @@ def draw_online_jelly_icon(surf, x, y, highlighted=False):
 
 def draw_online_interact_list(surf, wx, wy, action, action_phase=0.0):
     items = [('banzai','만세하기'),('dance','춤추기'),('smoking','흡연'),('thumbsup','따봉'),('thumbsup2','쌍따봉'),('working','작업 모드'),('crunch','마감 모드')]
-    iw, ih = 115, 36
+    iw, ih = 105, 30
     ly = wy - len(items)*ih - 8
     for i,(key,label) in enumerate(items):
         iy = ly + i*ih
         bg = pygame.Surface((iw,ih),pygame.SRCALPHA)
         active = action==key
         bg.fill((25,70,50,235) if active else (15,45,35,215))
-        pygame.draw.rect(bg,(80,200,130) if active else (55,140,90),(0,0,iw,ih),1,border_radius=6)
+        pygame.draw.rect(bg,(80,200,130) if active else (55,140,90),(0,0,iw,ih),1,border_radius=5)
         lx = min(wx-iw//2, OW-iw-5)
         surf.blit(bg,(lx,iy))
-        fl=get_font(14,bold=True)
+        fl=get_font(12,bold=True)
         _yellow_keys = ('working', 'crunch')
         _tc = (255,240,80) if (key in _yellow_keys and active) else (255,220,60) if key in _yellow_keys else (200,255,220) if active else (155,215,180)
         tl=fl.render(label,True,_tc)
@@ -3754,8 +3757,8 @@ def draw_online_interact_list(surf, wx, wy, action, action_phase=0.0):
                 pygame.draw.circle(surf,(255,min(255,_bright+80),0),(_bx,_by),1)
         # 마감 모드 활성화 시 왼쪽에 크런치 모드 버튼 표시
         if key == 'crunch' and action in ('crunch','supercrunch'):
-            sw2 = 45; sh2 = ih // 2
-            slx = lx - sw2 - 6
+            sw2 = 36; sh2 = ih // 2
+            slx = lx - sw2 - 5
             sly = iy + (ih - sh2) // 2
             sbg = pygame.Surface((sw2,sh2),pygame.SRCALPHA)
             _sc_active = action == 'supercrunch'
@@ -3777,7 +3780,7 @@ def draw_online_interact_list(surf, wx, wy, action, action_phase=0.0):
                     pygame.draw.circle(surf,(255,min(255,_br),_br//4),(_bx2,_by2),1)
 
 
-def _draw_online_action(surf, cx, cy, bw, bh, action, phase):
+def _draw_online_action(surf, cx, cy, bw, bh, action, phase, label_top_y=None):
     tc = (228,175,132); thick = max(2, bw//16)
     if action == 'banzai':
         # 만세: sin 곡선으로 한 번 들었다 내림
@@ -3888,11 +3891,11 @@ def _draw_online_action(surf, cx, cy, bw, bh, action, phase):
             s1x = cx + side*int(bw*0.32); s1y = cy + bh//8
             e1x = cx + side*int(bw*0.24); e1y = ky - ps + arm_bob
             pygame.draw.line(surf, (*tc,215), (s1x,s1y), (e1x,e1y), thick)
-        # "작업 중" 라벨 — 닉네임(cy-bh//2-14~30) 위에 배치
         fo = get_font(max(8, bw//5))
         dots = '.' * (int(phase * 2) % 4)
         tw = fo.render(f'작업 중{dots}', True, (200,230,255))
-        surf.blit(tw, (cx - tw.get_width()//2, cy - bh//2 - tw.get_height() - 26))
+        _ly = (label_top_y - tw.get_height() - 12) if label_top_y is not None else (cy - bh//2 - tw.get_height() - 26)
+        surf.blit(tw, (cx - tw.get_width()//2, _ly))
     elif action == 'crunch':
         ps = max(2, bw // 14)
         dy = 0
@@ -3948,7 +3951,8 @@ def _draw_online_action(surf, cx, cy, bw, bh, action, phase):
         fo = get_font(max(8, bw // 5))
         dots = '.' * (int(phase * 3) % 4)
         tw = fo.render(f'작업 중{dots}', True, (200, 230, 255))
-        surf.blit(tw, (cx - tw.get_width() // 2, cy - bh // 2 - tw.get_height() - 26))
+        _ly = (label_top_y - tw.get_height() - 12) if label_top_y is not None else (cy - bh//2 - tw.get_height() - 26)
+        surf.blit(tw, (cx - tw.get_width() // 2, _ly))
     elif action == 'supercrunch':
         ps = max(2, bw // 14)
         dy = 0
@@ -4005,7 +4009,8 @@ def _draw_online_action(surf, cx, cy, bw, bh, action, phase):
         tw = fo.render('으아아아!!', True, (255, 20, 20))
         _shake_x = int(math.sin(phase * 22) * 3)
         _shake_y = int(math.cos(phase * 18) * 2)
-        surf.blit(tw, (cx - tw.get_width()//2 + _shake_x, cy - bh//2 - tw.get_height() - 26 + _shake_y))
+        _ly = (label_top_y - tw.get_height() - 12) if label_top_y is not None else (cy - bh//2 - tw.get_height() - 26)
+        surf.blit(tw, (cx - tw.get_width()//2 + _shake_x, _ly + _shake_y))
 
 
 
@@ -6789,6 +6794,7 @@ def main():
     online_keys         = {'w':False,'a':False,'s':False,'d':False}
     online_chat_input   = ''
     online_chat_ime     = ''
+    _ime_bs             = False
     online_chat_active  = False
     online_sync_t       = 0
     online_loc          = 'main'   # 'main' 또는 'plaza'
@@ -6987,8 +6993,8 @@ def main():
                         online_chat_active=False; pygame.key.stop_text_input()
                     elif event.key == pygame.K_ESCAPE:
                         online_chat_active=False; online_chat_input=''; pygame.key.stop_text_input()
-                    elif event.key == pygame.K_BACKSPACE and not online_chat_ime:
-                        online_chat_input=online_chat_input[:-1]
+                    elif event.key == pygame.K_BACKSPACE:
+                        online_chat_input=online_chat_input[:-1]; online_chat_ime=''; _ime_bs=True
                     elif event.key == pygame.K_v and (event.mod & pygame.KMOD_CTRL):
                         _cv=get_clipboard_text()
                         if _cv: online_chat_input=(online_chat_input+_cv.strip())[:120]
@@ -7035,8 +7041,8 @@ def main():
                         pinned_chat_active = False; pygame.key.stop_text_input()
                     elif event.key == pygame.K_ESCAPE:
                         pinned_chat_active = False; pinned_chat_input = ''; pygame.key.stop_text_input()
-                    elif event.key == pygame.K_BACKSPACE and not pinned_chat_ime:
-                        pinned_chat_input = pinned_chat_input[:-1]
+                    elif event.key == pygame.K_BACKSPACE:
+                        pinned_chat_input=pinned_chat_input[:-1]; pinned_chat_ime=''; _ime_bs=True
                     elif event.key == pygame.K_v and (event.mod & pygame.KMOD_CTRL):
                         _cv = get_clipboard_text()
                         if _cv: pinned_chat_input = (pinned_chat_input + _cv.strip())[:40]
@@ -7075,7 +7081,8 @@ def main():
                 elif show_nickname_input and len(nickname_text) < 12:
                     nickname_text += event.text; ime_composition = ''
             elif event.type == pygame.TEXTEDITING:
-                if show_status_input: status_ime = event.text
+                if _ime_bs: _ime_bs = False  # 백스페이스 직후 OS 잔여 조합 무시
+                elif show_status_input: status_ime = event.text
                 elif online_chat_active: online_chat_ime = event.text
                 elif pinned_chat_active: pinned_chat_ime = event.text
                 elif show_nickname_input: ime_composition = event.text
@@ -7189,14 +7196,14 @@ def main():
                         # 인터랙션 리스트 항목
                         elif online_interact_open:
                             items=[('banzai',60),('dance',180),('smoking',300),('thumbsup',120),('thumbsup2',120),('working',600),('crunch',600)]
-                            iw,ih=115,36; wx_c=OW-20; ly_c=OH_PLAY-20-len(items)*ih-8
+                            iw,ih=105,30; wx_c=OW-20; ly_c=OH_PLAY-20-len(items)*ih-8
                             _clicked=False
                             for i,(key,dur) in enumerate(items):
                                 iy=ly_c+i*ih
                                 lx_c=min(wx_c-iw//2, OW-iw-5)
                                 # 크런치 모드 서브버튼 (마감 모드 활성화 시 왼쪽)
                                 if key=='crunch' and online_action=='crunch':
-                                    sw2=45; sh2=ih//2; slx=lx_c-sw2-6; sly=iy+(ih-sh2)//2
+                                    sw2=36; sh2=ih//2; slx=lx_c-sw2-5; sly=iy+(ih-sh2)//2
                                     if pygame.Rect(slx,sly,sw2,sh2).collidepoint(mx,my):
                                         if online_action=='supercrunch': online_action='crunch'; online_action_timer=999999
                                         else: online_action='supercrunch'; online_action_timer=999999; online_action_phase=0.0
@@ -7616,11 +7623,11 @@ def main():
                         play_ui_click()
                         show_bag = True; has_new = False; show_scroll = False
                         context = None; inv_page = 0; inv_detail = None
-                    elif SCROLL_RECT.collidepoint(mx, my):
+                    elif SCROLL_RECT.collidepoint(mx, my) and not show_online:
                         play_ui_click()
                         show_scroll = True; has_new_doc = False
                         show_bag = False; show_aquarium = False; inv_detail = None; context = None
-                    elif AQUARIUM_RECT.collidepoint(mx, my):
+                    elif AQUARIUM_RECT.collidepoint(mx, my) and not show_online:
                         show_aquarium = True
                         if SND_AQUARIUM: SND_AQUARIUM.play()
                         show_bag = False; show_scroll = False; context = None
