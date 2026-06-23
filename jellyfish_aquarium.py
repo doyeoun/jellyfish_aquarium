@@ -1794,6 +1794,9 @@ def get_unlocked_slots(inventory):
     if i.get(18,0)>=1:                           u.add(19)  # 선인장
     if i.get(19,0)>=6:                           u.add(20)  # 눈사람
     if i.get(20,0)>=10:                          u.add(21)  # 황금
+    if i.get(23,0)>=5 and i.get(22,0)>=5:       u.add(24)  # 푸딩 (파분 5 + 무지개 5)
+    if i.get(24,0)>=5:                           u.add(25)  # 소다맛 푸딩 (푸딩 5)
+    if i.get(25,0)>=10:                          u.add(26)  # 벚꽃 (소다맛 푸딩 10)
     return u
 
 _unlocked_slots = {0}
