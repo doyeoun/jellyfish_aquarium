@@ -528,7 +528,7 @@ def fetch_rankings_bg():
 
 _wardrobe_cache = {'items': set(), 'equipped': None}
 
-def save_game(inventory, stage, cult_docs=None, aquarium=None, nickname='', bgm_vol=0.35, sfx_vol=0.7, chat_vol=0.7, wardrobe_items=None, equipped_item=None):
+def save_game(inventory, stage, cult_docs=None, aquarium=None, nickname='', bgm_vol=0.35, sfx_vol=0.7, chat_vol=0.7, wardrobe_items=None, equipped_item=None, shortcut_catch=None, shortcut_kill=None):
     wd = wardrobe_items if wardrobe_items is not None else _wardrobe_cache['items']
     eq = equipped_item if equipped_item is not None else _wardrobe_cache['equipped']
     data = {
@@ -543,6 +543,8 @@ def save_game(inventory, stage, cult_docs=None, aquarium=None, nickname='', bgm_
         'chat_vol':   chat_vol,
         'wardrobe':   list(wd),
         'equipped_item': eq or '',
+        'shortcut_catch': shortcut_catch or '',
+        'shortcut_kill':  shortcut_kill  or '',
     }
     try:
         with open(SAVE_PATH, 'w', encoding='utf-8') as f:
@@ -568,9 +570,11 @@ def load_game():
         raw_w = data.get('wardrobe', [])
         wardrobe = set(raw_w) if isinstance(raw_w, list) else set(raw_w.keys())
         equipped_item_sv = data.get('equipped_item', '') or None
-        return inv, stage, cult_docs, aquarium, bred_slots, nickname, bgm_vol, sfx_vol, chat_vol, wardrobe, equipped_item_sv
+        shortcut_catch_sv = data.get('shortcut_catch', '') or None
+        shortcut_kill_sv  = data.get('shortcut_kill',  '') or None
+        return inv, stage, cult_docs, aquarium, bred_slots, nickname, bgm_vol, sfx_vol, chat_vol, wardrobe, equipped_item_sv, shortcut_catch_sv, shortcut_kill_sv
     except Exception:
-        return {}, 1, {}, [], set(), '', 0.35, 0.7, 0.7, set(), None
+        return {}, 1, {}, [], set(), '', 0.35, 0.7, 0.7, set(), None, None, None
 
 try:
     import ctypes
@@ -4368,7 +4372,7 @@ def draw_slider(surf, sx, sy, sw, value, color=(80,140,220)):
     pygame.draw.circle(surf,color,(tx,sy+h//2),8)
 
 
-def draw_settings_screen(surf, bgm_vol, sfx_vol, chat_vol=0.7, always_on_top=False, page=0):
+def draw_settings_screen(surf, bgm_vol, sfx_vol, chat_vol=0.7, always_on_top=False, page=0, shortcut_catch=None, shortcut_kill=None, binding_target=None):
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     overlay.fill((5,10,30,245))
     surf.blit(overlay,(0,0))
@@ -4399,7 +4403,7 @@ def draw_settings_screen(surf, bgm_vol, sfx_vol, chat_vol=0.7, always_on_top=Fal
         tp3=pct.render(f'{int(chat_vol*100)}%',True,(220,235,255))
         surf.blit(tp3,(SL_CHAT[0]+SL_CHAT[2]-tp3.get_width(),SL_CHAT[1]-28))
         draw_slider(surf,SL_CHAT[0],SL_CHAT[1],SL_CHAT[2],chat_vol,(200,130,220))
-    else:
+    elif page == 1:
         # ── 화면 설정 ──
         ft=get_font(19,bold=True); nt=ft.render('화면 설정',True,(190,220,255))
         surf.blit(nt,(WIDTH//2-nt.get_width()//2,14))
@@ -4416,28 +4420,64 @@ def draw_settings_screen(surf, bgm_vol, sfx_vol, chat_vol=0.7, always_on_top=Fal
         _circle_x=(_aot_bx+33) if always_on_top else (_aot_bx+11)
         pygame.draw.circle(surf,(255,255,255) if always_on_top else (160,165,175),(_circle_x,_aot_by+11),8)
 
+    if page == 2:
+        # ── 단축키 설정 ──
+        ft=get_font(19,bold=True); nt=ft.render('단축키 설정',True,(190,220,255))
+        surf.blit(nt,(WIDTH//2-nt.get_width()//2,14))
+        pygame.draw.line(surf,(50,90,160),(18,46),(WIDTH-18,46),1)
+        _sc_y = 90
+        for _sc_key, _sc_label, _sc_val in [
+            ('catch', '해파리 잡기',  shortcut_catch),
+            ('kill',  '해파리 죽이기', shortcut_kill),
+        ]:
+            _waiting = binding_target == _sc_key
+            fl.render(_sc_label, True, (175,215,250))
+            surf.blit(fl.render(_sc_label,True,(175,215,250)), (SL_BGM[0], _sc_y))
+            # 키 버튼
+            _kname = _sc_val.upper() if _sc_val else '없음'
+            _kbg = pygame.Surface((80,30),pygame.SRCALPHA)
+            if _waiting:
+                _kbg.fill((60,20,20,230))
+                pygame.draw.rect(_kbg,(255,80,80),(0,0,80,30),2,border_radius=6)
+                _ktext = get_font(13,bold=True).render('키 입력...',True,(255,140,140))
+            else:
+                _kbg.fill((22,42,88,210))
+                pygame.draw.rect(_kbg,(65,120,210),(0,0,80,30),1,border_radius=6)
+                _ktext = get_font(13,bold=True).render(_kname,True,(200,230,255))
+            surf.blit(_kbg,(WIDTH-98,_sc_y-4))
+            surf.blit(_ktext,(WIDTH-98+40-_ktext.get_width()//2, _sc_y+11-_ktext.get_height()//2))
+            # 취소 버튼
+            if _sc_val:
+                _xbg = pygame.Surface((36,22),pygame.SRCALPHA)
+                _xbg.fill((60,20,20,200)); pygame.draw.rect(_xbg,(180,60,60),(0,0,36,22),1,border_radius=5)
+                surf.blit(_xbg,(WIDTH-140,_sc_y+3))
+                _xt=get_font(11,bold=True).render('취소',True,(255,120,120))
+                surf.blit(_xt,(WIDTH-140+18-_xt.get_width()//2, _sc_y+11-_xt.get_height()//2))
+            _sc_y += 60
+        surf.blit(get_font(11).render('버튼을 클릭 후 원하는 키를 누르세요. ESC = 취소',True,(100,140,180)),
+                  (WIDTH//2 - 120, _sc_y + 10))
+
     # ── 하단 페이지 네비게이션 ──
     _nav_y = HEIGHT - 48
     pygame.draw.line(surf,(50,90,160),(18,_nav_y-8),(WIDTH-18,_nav_y-8),1)
-    # 페이지 인디케이터
-    for _pi in range(2):
-        _dot_x = WIDTH//2 - 10 + _pi*20
+    _pages = 3
+    for _pi in range(_pages):
+        _dot_x = WIDTH//2 - (_pages-1)*12 + _pi*24
         _dot_col = (140,190,255) if _pi==page else (50,70,100)
         pygame.draw.circle(surf, _dot_col, (_dot_x, _nav_y+14), 5)
-    # 왼쪽 화살표 (page>0)
+    _page_names = ['사운드','화면','단축키']
     if page > 0:
-        _ab = pygame.Surface((44,28),pygame.SRCALPHA)
-        _ab.fill((22,42,88,200)); pygame.draw.rect(_ab,(65,120,210),(0,0,44,28),1,border_radius=6)
+        _ab = pygame.Surface((56,28),pygame.SRCALPHA)
+        _ab.fill((22,42,88,200)); pygame.draw.rect(_ab,(65,120,210),(0,0,56,28),1,border_radius=6)
         surf.blit(_ab,(18,_nav_y))
-        _at=get_font(13,bold=True).render('◀ 사운드',True,(165,210,255))
-        surf.blit(_at,(18+22-_at.get_width()//2,_nav_y+14-_at.get_height()//2))
-    # 오른쪽 화살표 (page<1)
-    if page < 1:
-        _ab2 = pygame.Surface((44,28),pygame.SRCALPHA)
-        _ab2.fill((22,42,88,200)); pygame.draw.rect(_ab2,(65,120,210),(0,0,44,28),1,border_radius=6)
-        surf.blit(_ab2,(WIDTH-62,_nav_y))
-        _at2=get_font(13,bold=True).render('화면 ▶',True,(165,210,255))
-        surf.blit(_at2,(WIDTH-62+22-_at2.get_width()//2,_nav_y+14-_at2.get_height()//2))
+        _at=get_font(13,bold=True).render(f'◀ {_page_names[page-1]}',True,(165,210,255))
+        surf.blit(_at,(18+28-_at.get_width()//2,_nav_y+14-_at.get_height()//2))
+    if page < _pages-1:
+        _ab2 = pygame.Surface((56,28),pygame.SRCALPHA)
+        _ab2.fill((22,42,88,200)); pygame.draw.rect(_ab2,(65,120,210),(0,0,56,28),1,border_radius=6)
+        surf.blit(_ab2,(WIDTH-74,_nav_y))
+        _at2=get_font(13,bold=True).render(f'{_page_names[page+1]} ▶',True,(165,210,255))
+        surf.blit(_at2,(WIDTH-74+28-_at2.get_width()//2,_nav_y+14-_at2.get_height()//2))
 
 
 def draw_ranking_icon(surf, rect):
@@ -7332,7 +7372,7 @@ def main():
     pop_bubbles    = []
     cult_doc_drops = []
     _chaos_kill_count = {8: 0, 29: 0}  # 천사/악마 처치 횟수 추적
-    inventory, loaded_stage, cult_docs, saved_aquarium, saved_bred, saved_nickname, bgm_vol, sfx_vol, chat_vol, saved_wardrobe, saved_equipped = load_game()
+    inventory, loaded_stage, cult_docs, saved_aquarium, saved_bred, saved_nickname, bgm_vol, sfx_vol, chat_vol, saved_wardrobe, saved_equipped, saved_sc_catch, saved_sc_kill = load_game()
     pygame.mixer.music.set_volume(bgm_vol)
     for _s, _v_base in [(SND_KILL,0.7),(SND_FEED,0.8),(SND_BUBBLE,0.5),(SND_BELL,0.7),(SND_FANFARE,0.8),(SND_AQUARIUM,0.6)]:
         if _s: _s.set_volume(_v_base * sfx_vol)
@@ -7351,7 +7391,10 @@ def main():
     show_new_game_warn  = False
     show_quit_confirm   = False
     show_settings       = False
-    settings_page       = 0   # 0=사운드, 1=화면
+    settings_page       = 0   # 0=사운드, 1=화면, 2=단축키
+    shortcut_catch      = None  # 잡기 단축키 (pygame key name)
+    shortcut_kill       = None  # 죽이기 단축키
+    binding_target      = None  # 현재 키 입력 대기 중인 대상 ('catch'/'kill')
     always_on_top       = False
     show_online         = False
     online_x            = float(OW//2)
@@ -7438,6 +7481,8 @@ def main():
     float_texts        = []
     wardrobe_items     = set(saved_wardrobe)
     equipped_item      = saved_equipped
+    shortcut_catch     = saved_sc_catch
+    shortcut_kill      = saved_sc_kill
     _wardrobe_cache['items']    = wardrobe_items
     _wardrobe_cache['equipped'] = equipped_item
     wardrobe_context   = None   # right-clicked item_id
@@ -7522,7 +7567,18 @@ def main():
                         show_intro = False
 
             elif event.type == pygame.KEYDOWN:
-                if show_online and show_status_input:
+                # 단축키 바인딩 대기 중
+                if binding_target and show_settings:
+                    if event.key == pygame.K_ESCAPE:
+                        binding_target = None
+                    else:
+                        _kname = pygame.key.name(event.key)
+                        if binding_target == 'catch': shortcut_catch = _kname
+                        elif binding_target == 'kill': shortcut_kill  = _kname
+                        binding_target = None
+                        save_game(inventory,_current_stage,cult_docs,aquarium,player_nickname,bgm_vol,sfx_vol,shortcut_catch=shortcut_catch,shortcut_kill=shortcut_kill)
+                        play_ui_click()
+                elif show_online and show_status_input:
                     if event.key == pygame.K_RETURN:
                         online_status_msg = status_input.strip()
                         show_status_input = False; status_input = ''; status_ime = ''
@@ -7639,6 +7695,21 @@ def main():
                     elif context: context = None
                     else:
                         show_quit_confirm = True
+                # 단축키: 잡기/죽이기 (컨텍스트 메뉴가 열려있을 때)
+                elif context and not show_bag and not show_aquarium and not show_settings:
+                    _kn = pygame.key.name(event.key)
+                    if shortcut_catch and _kn == shortcut_catch:
+                        j = context.jelly
+                        if SND_BUBBLE: SND_BUBBLE.play()
+                        old_unlocked = frozenset(_unlocked_slots)
+                        inventory[j.design_idx] = inventory.get(j.design_idx, 0) + 1
+                        update_unlocked_slots(inventory)
+                        jellies.remove(j); context = None
+                    elif shortcut_kill and _kn == shortcut_kill:
+                        j_killed = context.jelly
+                        j_killed.kill()
+                        if SND_KILL: SND_KILL.play()
+                        context = None
 
             elif event.type == pygame.TEXTINPUT:
                 if show_status_input and len(status_input) < 30:
@@ -7868,13 +7939,13 @@ def main():
                     elif show_settings:
                         _nav_y = HEIGHT - 48
                         if pygame.Rect(15,12,75,28).collidepoint(mx,my):
-                            show_settings = False
-                            save_game(inventory,_current_stage,cult_docs,aquarium,player_nickname,bgm_vol,sfx_vol)
+                            show_settings = False; binding_target = None
+                            save_game(inventory,_current_stage,cult_docs,aquarium,player_nickname,bgm_vol,sfx_vol,shortcut_catch=shortcut_catch,shortcut_kill=shortcut_kill)
                         # 네비게이션 화살표
-                        elif settings_page==0 and pygame.Rect(WIDTH-62,_nav_y,44,28).collidepoint(mx,my):
-                            settings_page=1; play_ui_click()
-                        elif settings_page==1 and pygame.Rect(18,_nav_y,44,28).collidepoint(mx,my):
-                            settings_page=0; play_ui_click()
+                        elif settings_page < 2 and pygame.Rect(WIDTH-74,_nav_y,56,28).collidepoint(mx,my):
+                            settings_page+=1; binding_target=None; play_ui_click()
+                        elif settings_page > 0 and pygame.Rect(18,_nav_y,56,28).collidepoint(mx,my):
+                            settings_page-=1; binding_target=None; play_ui_click()
                         # 사운드 페이지 슬라이더
                         elif settings_page==0:
                             if SL_BGM[0]<=mx<=SL_BGM[0]+SL_BGM[2] and abs(my-(SL_BGM[1]+12))<=16:
@@ -7897,6 +7968,21 @@ def main():
                                 always_on_top = not always_on_top
                                 set_window_always_on_top(always_on_top)
                                 play_ui_click()
+                        # 단축키 페이지
+                        elif settings_page==2:
+                            _sc_y2 = 90
+                            for _sc_k, _sc_v in (('catch',shortcut_catch),('kill',shortcut_kill)):
+                                # ✕ 초기화 버튼
+                                if _sc_v and pygame.Rect(WIDTH-140, _sc_y2+3, 36, 22).collidepoint(mx,my):
+                                    if _sc_k=='catch': shortcut_catch=None
+                                    else: shortcut_kill=None
+                                    binding_target=None; play_ui_click()
+                                    save_game(inventory,_current_stage,cult_docs,aquarium,player_nickname,bgm_vol,sfx_vol,shortcut_catch=shortcut_catch,shortcut_kill=shortcut_kill)
+                                # 키 바인딩 버튼
+                                elif pygame.Rect(WIDTH-98, _sc_y2-4, 80, 30).collidepoint(mx,my):
+                                    binding_target = None if binding_target==_sc_k else _sc_k
+                                    play_ui_click()
+                                _sc_y2 += 60
                     elif show_ranking:
                         if pygame.Rect(15,12,75,28).collidepoint(mx,my):
                             show_ranking = False
@@ -8220,24 +8306,24 @@ def main():
                             context = None
                         else:
                             context = None
-                    elif BAG_RECT.collidepoint(mx, my) and not show_online and not _click_handled:
+                    elif BAG_RECT.collidepoint(mx, my) and not show_online and not show_settings and not _click_handled:
                         play_ui_click()
                         show_bag = True; has_new = False; show_scroll = False
                         context = None; inv_page = 0; inv_detail = None
-                    elif SCROLL_RECT.collidepoint(mx, my) and not show_online:
+                    elif SCROLL_RECT.collidepoint(mx, my) and not show_online and not show_settings:
                         play_ui_click()
                         show_scroll = True; has_new_doc = False
                         show_bag = False; show_aquarium = False; inv_detail = None; context = None
-                    elif AQUARIUM_RECT.collidepoint(mx, my) and not show_online:
+                    elif AQUARIUM_RECT.collidepoint(mx, my) and not show_online and not show_settings:
                         show_aquarium = True
                         if SND_AQUARIUM: SND_AQUARIUM.play()
                         show_bag = False; show_scroll = False; context = None
-                    elif RANKING_RECT.collidepoint(mx, my) and not show_online:
+                    elif RANKING_RECT.collidepoint(mx, my) and not show_online and not show_settings:
                         play_ui_click()
                         show_ranking = True; show_ranking_back = pygame.Rect(15,12,75,28)
                         fetch_rankings_bg()
                         show_bag=False; show_scroll=False; show_aquarium=False; context=None
-                    elif ONLINE_RECT.collidepoint(mx, my) and player_nickname:
+                    elif ONLINE_RECT.collidepoint(mx, my) and player_nickname and not show_settings:
                         show_online = True
                         online_x = float(OW//2); online_y = float(OH_PLAY//2)
                         online_keys = {'w':False,'a':False,'s':False,'d':False}
@@ -8551,7 +8637,7 @@ def main():
             draw_pinned_chat_overlay(screen, _filtered_chat, player_nickname,
                                      pinned_chat_input, pinned_chat_active, pinned_chat_ime)
         if show_settings:
-            draw_settings_screen(screen, bgm_vol, sfx_vol, chat_vol, always_on_top, settings_page)
+            draw_settings_screen(screen, bgm_vol, sfx_vol, chat_vol, always_on_top, settings_page, shortcut_catch, shortcut_kill, binding_target)
         if show_ranking:
             draw_ranking_screen(screen, _rankings_cache, _rankings_loading, player_nickname)
         if show_nickname_input and not show_intro:
