@@ -1954,8 +1954,8 @@ def get_unlocked_slots(inventory):
     if i.get(26,0)>=7:                           u.add(31)  # 새싹 (벚꽃 7)
     if i.get(21,0)>=5:                           u.add(32)  # 해파리인 척 (황금 5)
     if i.get(21,0)>=5 and i.get(22,0)>=3:       u.add(33)  # 홀로그램 (황금5+무지개3)
-    if i.get(0,0)>=15:                           u.add(34)  # 슬픈 (파란 해파리 15마리)
-    if i.get(0,0)>=20:                           u.add(35)  # 똥 (파란 해파리 20마리)
+    if i.get(15,0)>=30 and i.get(33,0)>=5:       u.add(34)  # 슬픈 (화난 30 + 홀로그램 5)
+    if i.get(34,0)>=10:                          u.add(35)  # 똥 (슬픈 해파리 10마리)
     return u
 
 _unlocked_slots = {0}
