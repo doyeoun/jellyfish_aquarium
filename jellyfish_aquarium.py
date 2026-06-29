@@ -985,7 +985,7 @@ JELLY_NAMES = ['파란 해파리', '분홍 해파리', '개구리 모자 해파�
                '슬라임 해파리', '얼어붙은 해파리', '천사 해파리', '유령 해파리',
                '털복숭이 해파리', '해파리 왕', '썩은 해파리', '심해 해파리', '구름 해파리', '화난 해파리',
                '멋쟁이 해파리', '토끼 해파리', '저주받은 해파리',
-               '선인장 해파리', '눈사람 해파리', '황금 해파리', '무지개 해파리', '파분 해파리', '푸딩 해파리', '소다맛 푸딩 해파리', '벚꽃 해파리', '쌍둥이 해파리', '아기 해파리', '악마 해파리', '혼돈 해파리', '새싹 해파리', '해파리인 척 해파리', '홀로그램 해파리', '슬픈 해파리']
+               '선인장 해파리', '눈사람 해파리', '황금 해파리', '무지개 해파리', '파분 해파리', '푸딩 해파리', '소다맛 푸딩 해파리', '벚꽃 해파리', '쌍둥이 해파리', '아기 해파리', '악마 해파리', '혼돈 해파리', '새싹 해파리', '해파리인 척 해파리', '홀로그램 해파리', '슬픈 해파리', '똥 해파리']
 
 # ── 등급 시스템 ───────────────────────────────────────────────
 GRADE_ORDER  = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'secret', 'lock']
@@ -1081,6 +1081,7 @@ JELLY_GRADES = {
     32: 'rare',      # 해파리인 척 해파리
     33: 'legendary', # 홀로그램 해파리
     34: 'uncommon',  # 슬픈 해파리
+    35: 'common',   # 똥 해파리
 }
 
 # ── 해파리 도감 정보 ───────────────────────────────────────────
@@ -1178,6 +1179,9 @@ JELLY_INFO = {
     22: {'habitat': '빛이 굴절되는 얕은 바다 수면 아래',
          'personality': '몸 전체에서 일곱 빛깔 무지개가 흐른다. 보는 이에게 근거 없는 설렘을 준다.',
          'quote': '"세상에 나쁜 색은 없어. 다 아름답거든."'},
+    35: {'habitat': '어딘가 냄새나는 바다 밑',
+         'personality': '자기 머리 위에 뭐가 있는지 모른다. 그런데 왜인지 다른 해파리들이 가까이 안 온다.',
+         'quote': '"뭐야, 왜 다들 피해?"'},
     34: {'habitat': '잔잔하지만 왠지 슬픈 바다',
          'personality': '늘 조용히 떠다닌다. 딱히 슬픈 일이 있는 건 아닌데 눈물이 멈추지 않는다.',
          'quote': '"괜찮아. 그냥 눈이 좀 예민한 거야."'},
@@ -1811,6 +1815,23 @@ def make_sad_bell_sprite():
 
 SAD_BELL_SPRITE = make_sad_bell_sprite()
 
+def make_poop_bell_sprite():
+    """똥 해파리: 갈색 계열."""
+    cmap = {'.':None,'X':(80,45,10),'D':(120,70,20),'M':(160,100,35),'H':(200,140,65)}
+    art = JELLY_DEFS[0]['art']
+    BH = len(art); ps = 4
+    raw = pygame.Surface((W_PIX, BH), pygame.SRCALPHA)
+    for row, line in enumerate(art):
+        for col, ch in enumerate(line[:W_PIX]):
+            c = cmap.get(ch)
+            if c: raw.set_at((col, row), (*c, 255))
+    ey = BH - 3
+    raw.set_at((W_PIX//2-2, ey), (40, 20, 5, 255))
+    raw.set_at((W_PIX//2+1, ey), (40, 20, 5, 255))
+    return pygame.transform.scale(raw, (W_PIX*ps, BH*ps))
+
+POOP_BELL_SPRITE = make_poop_bell_sprite()
+
 def make_fake_jelly_sprite():
     """해파리인 척 해파리: 픽셀아트 물고기 (격자 방식)."""
     ps = 4  # 픽셀 1칸 크기
@@ -1934,6 +1955,7 @@ def get_unlocked_slots(inventory):
     if i.get(21,0)>=5:                           u.add(32)  # 해파리인 척 (황금 5)
     if i.get(21,0)>=5 and i.get(22,0)>=3:       u.add(33)  # 홀로그램 (황금5+무지개3)
     if i.get(0,0)>=15:                           u.add(34)  # 슬픈 (파란 해파리 15마리)
+    if i.get(0,0)>=3:                            u.add(35)  # 똥 (파란 해파리 3마리)
     return u
 
 _unlocked_slots = {0}
@@ -2205,6 +2227,7 @@ class AquariumFish:
                else FAKE_JELLY_SPRITE if self.design_idx==32
                else AMETHYST_BELL_SPRITE if self.design_idx==33
                else SAD_BELL_SPRITE if self.design_idx==34
+               else POOP_BELL_SPRITE if self.design_idx==35
                else BELL_SPRITES[bi])
         spr = pygame.transform.scale(spr, (bw, bh))
         if self.design_idx == 9:   spr.set_alpha(72)
@@ -2300,7 +2323,7 @@ class AquariumFish:
             pygame.draw.rect(surf, (220,20,20),  (x+bw//16, _ey3, _pw3, _ph3))
 
         # 촉수
-        tc  = (222,158,175) if self.design_idx==28 else (90,15,170) if self.design_idx==29 else (201,230,105) if self.design_idx==31 else JELLY_DEFS[bi]['tc']
+        tc  = (222,158,175) if self.design_idx==28 else (90,15,170) if self.design_idx==29 else (201,230,105) if self.design_idx==31 else (56,134,244) if self.design_idx==34 else (130,78,22) if self.design_idx==35 else JELLY_DEFS[bi]['tc']
         if self.design_idx == 7:
             th_f  = max(6, int(bh*0.55)); dot_f = max(2, bw//W_PIX)
             t_s   = pygame.Surface((bw, th_f), pygame.SRCALPHA)
@@ -2924,6 +2947,7 @@ def draw_aquarium_add_screen(surf, inventory, scroll_y=0):
                 else FAKE_JELLY_SPRITE  if slot==32
                 else AMETHYST_BELL_SPRITE if slot==33
                 else SAD_BELL_SPRITE if slot==34
+                else POOP_BELL_SPRITE if slot==35
                 else BELL_SPRITES[bi5])
         spr5 = pygame.transform.scale(spr5,(sw5,sh5))
         if slot==9:   spr5.set_alpha(72)
@@ -3007,7 +3031,7 @@ def draw_dev_reset_screen(surf, inventory):
         surf.blit(et, (WIDTH//2-et.get_width()//2, HEIGHT//2))
 
 
-def draw_dev_spawn_screen(surf, dev_spawn_idx):
+def draw_dev_spawn_screen(surf, dev_spawn_idx, scroll_y=0):
     """[DEV] 스폰 해파리 필터 설정 화면."""
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     overlay.fill((5, 5, 25, 245))
@@ -3029,24 +3053,36 @@ def draw_dev_spawn_screen(surf, dev_spawn_idx):
     surf.blit(ta,(WIDTH//2-ta.get_width()//2,48))
     pygame.draw.line(surf,(40,80,160),(18,76),(WIDTH-18,76),1)
     CW, CH = 68, 62; cols = 5; margin_x = 8; start_y = 82
+    _clip = pygame.Surface((WIDTH, HEIGHT - start_y), pygame.SRCALPHA)
     for slot in range(len(JELLY_NAMES)):
         col = slot % cols; row = slot // cols
         cx5 = margin_x + CW//2 + col*(CW+4)
-        cy5 = start_y + CH//2 + row*(CH+4)
-        if cy5 > HEIGHT: break
+        cy5 = CH//2 + row*(CH+4) - scroll_y
+        if cy5 + CH//2 < 0 or cy5 - CH//2 > HEIGHT - start_y: continue
         sel = (dev_spawn_idx == slot)
         card = pygame.Surface((CW,CH),pygame.SRCALPHA)
         card.fill((20,50,120,220) if sel else (10,20,50,140))
         pygame.draw.rect(card,(255,210,60) if sel else (45,80,160),(0,0,CW,CH),2 if sel else 1,border_radius=6)
-        surf.blit(card,(cx5-CW//2,cy5-CH//2))
+        _clip.blit(card,(cx5-CW//2,cy5-CH//2))
         bi5=_slot_base_idx(slot)
         spr5=(RAINBOW_BELL_SPRITE if slot==22 else PABUN_BELL_SPRITE if slot==23
               else TWIN_BELL_SPRITE if slot==27 else BABY_BELL_SPRITE if slot==28
               else DEMON_BELL_SPRITE if slot==29 else BELL_SPRITES[bi5])
         sw5,sh5=44,34; spr5=pygame.transform.scale(spr5,(sw5,sh5))
-        surf.blit(spr5,(cx5-sw5//2,cy5-CH//2+6))
+        _clip.blit(spr5,(cx5-sw5//2,cy5-CH//2+6))
         fn5=get_font(9); nt5=fn5.render(JELLY_NAMES[slot],True,(200,230,255) if sel else (140,175,215))
-        surf.blit(nt5,(cx5-nt5.get_width()//2,cy5+CH//2-16))
+        _clip.blit(nt5,(cx5-nt5.get_width()//2,cy5+CH//2-16))
+    surf.blit(_clip, (0, start_y))
+    # 스크롤바
+    _total_h = ((len(JELLY_NAMES)-1)//cols + 1) * (CH+4)
+    _view_h = HEIGHT - start_y
+    if _total_h > _view_h:
+        _max_s = _total_h - _view_h
+        _tr_x = WIDTH-5; _tr_h = _view_h
+        pygame.draw.rect(surf,(20,40,80),(_tr_x, start_y, 3, _tr_h),border_radius=2)
+        _th2 = max(20, int(_tr_h*_view_h/_total_h))
+        _tp2 = int((_tr_h-_th2)*scroll_y/_max_s) if _max_s else 0
+        pygame.draw.rect(surf,(80,140,220),(_tr_x, start_y+_tp2, 3, _th2),border_radius=2)
 
 
 def draw_dev_add_screen(surf, inventory):
@@ -4113,6 +4149,44 @@ def _draw_hologram_effect(surf, cx, cy, bw, bh, spr):
         surf.blit(_sp_s, (_px2-_c2, _py2-_c2))
 
 
+def _draw_poop(surf, cx, top_y, bw, bh):
+    """똥 해파리: 머리 위 💩 픽셀아트 격자 방식."""
+    pc  = (130, 75, 20)    # 메인 갈색
+    pd  = (75,  40,  8)    # 어두운 (외곽선)
+    ph  = (185, 130, 60)   # 하이라이트
+    ps2 = (200, 150, 80)   # 밝은 하이라이트
+    bob = int(math.sin(pygame.time.get_ticks()*0.002)*2)
+    base_y = top_y + bob
+
+    # ── 1층: 넓은 바닥 ──
+    bw1 = max(12, int(bw*0.58)); bh1 = max(8, int(bh*0.18))
+    by1 = base_y - bh1//2
+    pygame.draw.ellipse(surf, pd, (cx-bw1//2-1, by1-1, bw1+2, bh1+2))
+    pygame.draw.ellipse(surf, pc, (cx-bw1//2,   by1,   bw1,   bh1))
+    pygame.draw.ellipse(surf, ph, (cx-bw1//4,   by1+1, bw1//2, bh1//2))
+
+    # ── 2층: 중간 ──
+    bw2 = max(9, int(bw1*0.72)); bh2 = max(7, int(bh1*1.15))
+    by2 = by1 - bh1//2 - bh2//2 + 3
+    pygame.draw.ellipse(surf, pd, (cx-bw2//2-1, by2-1, bw2+2, bh2+2))
+    pygame.draw.ellipse(surf, pc, (cx-bw2//2,   by2,   bw2,   bh2))
+    pygame.draw.ellipse(surf, ph, (cx-bw2//4,   by2+1, bw2//2, bh2//2))
+
+    # ── 3층: 상단 (살짝 오른쪽으로 swirl) ──
+    bw3 = max(6, int(bw1*0.46)); bh3 = max(6, int(bh1*1.0))
+    ox3 = int(bw1*0.05)   # swirl 오프셋
+    by3 = by2 - bh2//2 - bh3//2 + 3
+    pygame.draw.ellipse(surf, pd, (cx-bw3//2+ox3-1, by3-1, bw3+2, bh3+2))
+    pygame.draw.ellipse(surf, pc, (cx-bw3//2+ox3,   by3,   bw3,   bh3))
+    pygame.draw.ellipse(surf, ph, (cx-bw3//4+ox3,   by3+1, bw3//2, bh3//2))
+
+    # ── 뾰족한 끝 (오른쪽으로 살짝 굽음) ──
+    tip_bx = cx + ox3*2; tip_ty = by3 - bh3//2
+    pygame.draw.polygon(surf, pd, [(tip_bx-3, by3+1),(tip_bx+3, by3+1),(tip_bx+2, tip_ty-1),(tip_bx-1, tip_ty-1)])
+    pygame.draw.polygon(surf, pc, [(tip_bx-2, by3),(tip_bx+2, by3),(tip_bx+1, tip_ty),(tip_bx, tip_ty)])
+    pygame.draw.circle(surf, ps2, (tip_bx, by3-1), max(1, bw3//8))
+
+
 def _draw_sprout(surf, cx, top_y, bw, bh):
     """새싹: 줄기 + V자 세로 타원 잎 (유저 승인 버전)."""
     sc   = (118, 202, 1)
@@ -4999,6 +5073,7 @@ def draw_doc_detail(surf, doc_type, inventory):
                    else FAKE_JELLY_SPRITE if slot==32
                    else AMETHYST_BELL_SPRITE if slot==33
                    else SAD_BELL_SPRITE if slot==34
+                else POOP_BELL_SPRITE if slot==35
                    else BELL_SPRITES[bi])
             spr = pygame.transform.scale(spr, (sw, sh))
             if slot == 9:   spr.set_alpha(72)
@@ -5125,6 +5200,7 @@ def draw_gacha_screen(surf, slot, timer):
                     else FAKE_JELLY_SPRITE if slot==32
                     else AMETHYST_BELL_SPRITE if slot==33
                     else SAD_BELL_SPRITE if slot==34
+                else POOP_BELL_SPRITE if slot==35
                     else BELL_SPRITES[_slot_base_idx(slot)])
         spr2 = pygame.transform.scale(base_spr, (sw2, sh2))
         if slot == 29: _draw_demon_wings(surf, cx2, cy2+sh2//6, sw2, sw2//2)
@@ -5537,6 +5613,8 @@ def _draw_slot_overlay(surf, slot, pcx, pcy, sw, sh, happy=False):
         pygame.draw.rect(surf, (220,20,20),  (pcx+sw//16, _ey30, _pw30, _ph30))
     elif slot == 31:  # 새싹 해파리
         _draw_sprout(surf, pcx, pcy + int(sh*0.08), sw, sh)
+    elif slot == 35:  # 똥 해파리
+        _draw_poop(surf, pcx, pcy + int(sh*0.05), sw, sh)
     elif slot == 33:  # 홀로그램 해파리
         _spr33 = pygame.transform.scale(AMETHYST_BELL_SPRITE, (sw, sh))
         _draw_hologram_effect(surf, pcx, pcy + sh//2 - 4, sw, sh, _spr33)
@@ -5664,6 +5742,7 @@ def draw_inventory(surf, inventory, page=0):
             elif slot == 32: spr = pygame.transform.scale(FAKE_JELLY_SPRITE, (sw, sh))
             elif slot == 33: spr = pygame.transform.scale(AMETHYST_BELL_SPRITE, (sw, sh))
             elif slot == 34: spr = pygame.transform.scale(SAD_BELL_SPRITE, (sw, sh))
+            elif slot == 35: spr = pygame.transform.scale(POOP_BELL_SPRITE, (sw, sh))
             if slot == 29: _draw_demon_wings(surf, pcx, pcy+sh//2-4, int(sw*0.92), int(sh*0.92))
             if slot == 30: _draw_demon_wings(surf, pcx, pcy+sh//2-4, int(sw*0.92), int(sh*0.92), wing_color=(240,240,240))
             if slot == 33:
@@ -5880,6 +5959,7 @@ def draw_jelly_detail(surf, slot, inventory):
         elif slot == 32: spr = pygame.transform.scale(FAKE_JELLY_SPRITE, (sw, sh))
         elif slot == 33: spr = pygame.transform.scale(AMETHYST_BELL_SPRITE, (sw, sh))
         elif slot == 34: spr = pygame.transform.scale(SAD_BELL_SPRITE, (sw, sh))
+        elif slot == 35: spr = pygame.transform.scale(POOP_BELL_SPRITE, (sw, sh))
         if slot == 29: _draw_demon_wings(surf, pcx, pcy+sh//2-4, sw, sh)
         if slot == 30: _draw_demon_wings(surf, pcx, pcy+sh//2-4, sw, sh, wing_color=(240,240,240))
         if slot == 33:
@@ -6149,6 +6229,7 @@ class Jellyfish:
         self.amethyst_phase = 0.0
         self.is_sad        = False
         self.sad_phase     = 0.0
+        self.is_poop       = False
         self.is_cactus = False; self.is_snowman = False
         self.is_golden = False
         self.gold_particles = []
@@ -6211,6 +6292,7 @@ class Jellyfish:
             elif chosen == 32: base_idx = 0;  self.is_fakejelly  = True
             elif chosen == 33: base_idx = 0;  self.is_amethyst   = True
             elif chosen == 34: base_idx = 0;  self.is_sad        = True
+            elif chosen == 35: base_idx = 0;  self.is_poop       = True
             else:              base_idx = 0
         else:  # DEV_MODE: 등급별 확률
             # ── Common 50% (5종) ────────────────────────────────────
@@ -6268,6 +6350,8 @@ class Jellyfish:
             self.bell_sprite = AMETHYST_BELL_SPRITE
         elif self.design_idx == 34:
             self.bell_sprite = SAD_BELL_SPRITE
+        elif self.design_idx == 35:
+            self.bell_sprite = POOP_BELL_SPRITE
         self.tc = defn['tc']; self.tb = defn['tb']
         if self.design_idx == 28:
             self.tc = (222, 158, 175)
@@ -6282,13 +6366,16 @@ class Jellyfish:
         elif self.design_idx == 33:
             self.tc = (180, 100, 255)
         elif self.design_idx == 34:
-            self.tc = (56, 134, 244)  # #3886f4
+            self.tc = (56, 134, 244)
+        elif self.design_idx == 35:
+            self.tc = (140, 90, 30)  # 갈색
         self.BH         = len(defn['art'])
         self.body_color = defn['cmap'].get('M', self.tc)  # 눈 가리기용
         if self.design_idx == 31: self.body_color = (201, 230, 105)
         elif self.design_idx == 32: self.body_color = (140, 175, 195)
         elif self.design_idx == 33: self.body_color = (155, 75, 230)
         elif self.design_idx == 34: self.body_color = (56, 134, 244)
+        elif self.design_idx == 35: self.body_color = (160, 100, 35)
         sf = random.uniform(0.88, 1.15)
         self.bw0 = max(16, int(W_PIX*defn['ps']*sf))
         self.bh0 = max(8,  int(self.BH*defn['ps']*sf))
@@ -6340,6 +6427,7 @@ class Jellyfish:
             32:(0,{'is_fakejelly':True}),
             33:(0,{'is_amethyst':True}),
             34:(0,{'is_sad':True}),
+            35:(0,{'is_poop':True}),
         }
         base_idx, flags = _map.get(idx,(0,{}))
         for k,v in flags.items():
@@ -6355,6 +6443,7 @@ class Jellyfish:
         elif idx==32: self.bell_sprite=FAKE_JELLY_SPRITE
         elif idx==33: self.bell_sprite=AMETHYST_BELL_SPRITE
         elif idx==34: self.bell_sprite=SAD_BELL_SPRITE
+        elif idx==35: self.bell_sprite=POOP_BELL_SPRITE
         elif self.is_rainbow: self.bell_sprite=RAINBOW_BELL_SPRITE
         elif idx==23: self.bell_sprite=PABUN_BELL_SPRITE
         elif self.is_twin: self.bell_sprite=TWIN_BELL_SPRITE
@@ -6366,6 +6455,7 @@ class Jellyfish:
         elif idx==32: self.tc=(140,175,195)
         elif idx==33: self.tc=(180,100,255)
         elif idx==34: self.tc=(56,134,244)
+        elif idx==35: self.tc=(140,90,30)
         else: self.tc=defn['tc']
         self.tb=defn['tb']
         self.BH=len(defn['art'])
@@ -6373,6 +6463,7 @@ class Jellyfish:
         if self.design_idx == 31: self.body_color=(201,230,105)
         elif self.design_idx == 32: self.body_color=(140,175,195)
         elif self.design_idx == 34: self.body_color=(56,134,244)
+        elif self.design_idx == 35: self.body_color=(160,100,35)
         self.th0=max(10,int(self.bh0*0.65))
 
     def _sq(self):
@@ -6842,6 +6933,10 @@ class Jellyfish:
                     pygame.draw.polygon(_ts, (235,243,254,drop_a),
                                         [(drop_r+1,0),(drop_r-1,drop_r),(drop_r+3,drop_r)])
                     surf.blit(_ts, (ex_t-drop_r-1, drop_y-drop_r//2))
+
+        # 똥 해파리 — 머리 위 똥
+        if self.is_poop:
+            _draw_poop(surf, x, y - bh//2 + int(bh*0.05), bw, bh)
 
         # 새싹 해파리 — 머리 위 새싹
         if self.is_sprout:
@@ -7830,6 +7925,7 @@ def main():
     show_dev_reset    = False
     show_dev_add      = False
     show_dev_spawn    = False
+    dev_spawn_scroll  = 0
     dev_spawn_idx     = None   # None=랜덤, int=강제 스폰
     show_aquarium      = False
     aquarium_adding    = False
@@ -8099,6 +8195,11 @@ def main():
                     rows_s = (len(WARDROBE_ITEM_DEFS)+cols_s-1)//cols_s
                     max_scroll = max(0, rows_s*(ch_s+gap_s) - (HEIGHT-58-8))
                     wardrobe_scroll_y = max(0, min(max_scroll, wardrobe_scroll_y - event.y*35))
+                elif show_dev_spawn:
+                    _cols5 = 5; _ch5 = 66
+                    _total5 = ((len(JELLY_NAMES)-1)//_cols5+1)*_ch5
+                    _max5 = max(0, _total5-(HEIGHT-82))
+                    dev_spawn_scroll = max(0, min(_max5, dev_spawn_scroll - event.y*40))
                 elif show_scroll and scroll_doc_detail is None:
                     cult_doc_scroll_y = max(0, cult_doc_scroll_y - event.y * 35)
                 elif show_online and pygame.mouse.get_pos()[1] > OH_PLAY:
@@ -8369,8 +8470,9 @@ def main():
                             CW_s,CH_s=68,62; cols_s=5; mx_s=8; sy_s=82
                             for slot_s in range(len(JELLY_NAMES)):
                                 col_s=slot_s%cols_s; row_s=slot_s//cols_s
-                                cx_s=mx_s+CW_s//2+col_s*(CW_s+4); cy_s=sy_s+CH_s//2+row_s*(CH_s+4)
-                                if cy_s>HEIGHT: break
+                                cx_s=mx_s+CW_s//2+col_s*(CW_s+4)
+                                cy_s=sy_s+CH_s//2+row_s*(CH_s+4)-dev_spawn_scroll
+                                if cy_s<sy_s-CH_s: continue
                                 if abs(mx-cx_s)<CW_s//2 and abs(my-cy_s)<CH_s//2:
                                     dev_spawn_idx=slot_s; _dev_spawn_idx=slot_s
                                     show_dev_spawn=False; play_ui_click()
@@ -9013,7 +9115,7 @@ def main():
         if show_dev_add:
             draw_dev_add_screen(screen, inventory)
         if show_dev_spawn:
-            draw_dev_spawn_screen(screen, dev_spawn_idx)
+            draw_dev_spawn_screen(screen, dev_spawn_idx, dev_spawn_scroll)
         if DEV_MODE and dev_spawn_idx is not None and not show_dev_spawn:
             _sf = get_font(10, bold=True)
             _st = _sf.render(f'[SPAWN: {JELLY_NAMES[dev_spawn_idx]}] F키로 변경', True, (255,200,60))
