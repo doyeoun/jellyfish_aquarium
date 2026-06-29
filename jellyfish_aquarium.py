@@ -558,7 +558,7 @@ def load_game():
     try:
         with open(SAVE_PATH, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        inv        = {int(k): v for k, v in data.get('inventory', {}).items()}
+        inv        = {int(k): v for k, v in data.get('inventory', {}).items() if int(k) < len(JELLY_NAMES)}
         stage      = data.get('stage', 1)
         cult_docs  = {int(k): v for k, v in data.get('cult_docs', {}).items()}
         aquarium   = [int(x) for x in data.get('aquarium', [])]
@@ -1955,7 +1955,7 @@ def get_unlocked_slots(inventory):
     if i.get(21,0)>=5:                           u.add(32)  # 해파리인 척 (황금 5)
     if i.get(21,0)>=5 and i.get(22,0)>=3:       u.add(33)  # 홀로그램 (황금5+무지개3)
     if i.get(0,0)>=15:                           u.add(34)  # 슬픈 (파란 해파리 15마리)
-    if i.get(0,0)>=3:                            u.add(35)  # 똥 (파란 해파리 3마리)
+    if i.get(0,0)>=20:                           u.add(35)  # 똥 (파란 해파리 20마리)
     return u
 
 _unlocked_slots = {0}
